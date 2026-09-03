@@ -1,0 +1,15 @@
+name = "leanhttp_tests"
+version = "0.1.0"
+defaultTargets = ["leanhttp_tests"]
+
+[[require]]
+name = "leanhttp"
+path = ".."
+
+[[lean_exe]]
+name = "leanhttp_tests"
+root = "TestMain"
+
+[[lean_exe]]
+name = "loader_failure"
+root = "LoaderFailure"
