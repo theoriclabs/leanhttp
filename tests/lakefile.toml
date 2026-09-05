@@ -6,6 +6,9 @@ defaultTargets = ["leanhttp_tests"]
 name = "leanhttp"
 path = ".."
 
+[[lean_lib]]
+name = "Dsl"
+
 [[lean_exe]]
 name = "leanhttp_tests"
 root = "TestMain"

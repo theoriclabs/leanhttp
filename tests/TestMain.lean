@@ -1,4 +1,5 @@
 import LeanHttp
+import Dsl
 import Std.Http.Server
 
 open Lean (Json)
@@ -18,6 +19,7 @@ private structure Inspection where
   default : String
   override : String
   authorization : String
+  user_agent : String
   body : String
   deriving Lean.FromJson
 
@@ -40,9 +42,14 @@ private def handler (request : Request Body.Stream) : ContextAsync (Response Bod
         ("default", Json.str (request.line.headers.get? (Header.Name.ofString! "x-default") |>.map toString |>.getD "")),
         ("override", Json.str (request.line.headers.get? (Header.Name.ofString! "x-override") |>.map toString |>.getD "")),
         ("authorization", Json.str (request.line.headers.get? Header.Name.authorization |>.map toString |>.getD "")),
+        ("user_agent", Json.str (request.line.headers.get? Header.Name.userAgent |>.map toString |>.getD "")),
         ("body", Json.str ((String.fromUTF8? body).getD "<binary>"))]
       let full ← (Response.ok.header Header.Name.contentType (Header.Value.ofString! "application/json")).json json.compress
       return full
+  | ["query"] =>
+      let values := request.line.uri.query.toArray.map fun (name, value) =>
+        (name.decode.getD "<invalid>", value.bind (·.decode) |>.getD "<invalid>")
+      response .ok (Lean.toJson values).compress.toUTF8
   | ["status", code] =>
       let code := code.toNat?.getD 500 |>.toUInt16
       let status := (Status.ofCode none code).getD .internalServerError
@@ -93,6 +100,20 @@ def main : IO UInt32 := do
   check (echoed.status == .ok) "echo is 200"
   check (echoed.body == payload) "binary body round-trips including NUL"
   check ((echoed.headers.get? (Header.Name.ofString! "x-method")).map toString == some "POST") "method reaches server"
+
+  let getBody ← expectOk (← session.request {
+    method := .get
+    uri := serverUri port "echo"
+    body := .bytes headerValue!"application/octet-stream" payload }) "GET with body"
+  check (getBody.body == payload) "GET body round-trips"
+  check ((getBody.headers.get? headerName!"x-method").map toString == some "GET")
+    "a GET body does not change the method to POST"
+
+  let afterGetBody ← expectOk (← session.request (LeanHttp.Request.get (serverUri port "echo")))
+    "GET after body"
+  check (afterGetBody.body.isEmpty) "a reused session does not retain the preceding body"
+  check ((afterGetBody.headers.get? headerName!"x-method").map toString == some "GET")
+    "a reused session retains the next request's method"
 
   let inspected ← expectOk (← session.request {
     method := .patch
@@ -149,6 +170,61 @@ def main : IO UInt32 := do
   | .decode message _ => throw <| IO.userError s!"FAIL: typed response decode: {message}"
   | .transport e => throw <| IO.userError s!"FAIL: typed response transport: {e}"
 
+  let typedRequest := (LeanHttp.Request.post (serverUri port "inspect"))
+    |>.json (Json.mkObj [("name", Json.str "Ada")])
+    |>.bearer "typed-token"
+    |>.header headerName!"X-Override" headerValue!"typed"
+    |>.header Header.Name.contentType headerValue!"text/plain"
+  let typedPost : Outcome Inspection ← session.requestAs {
+    typedRequest with redirects := .never, timeouts := { total := 5000 } }
+  match typedPost with
+  | .ok value raw =>
+      check (value.method == "POST" && raw.status == .ok) "typed POST with raw response"
+      check (value.authorization == "Bearer typed-token") "typed request auth"
+      check (value.override == "typed" && value.default == "yes") "typed request header overlay"
+      check (value.content_type == "application/json" && value.body == "{\"name\":\"Ada\"}")
+        "JSON body controls its bytes and content type"
+      check (value.user_agent == s!"leanhttp/{LeanHttp.packageVersion}") "versioned user agent"
+  | _ => throw <| IO.userError "FAIL: typed POST"
+
+  let typedStatus : Outcome Inspection ← session.requestAs {
+    uri := serverUri port "redirect", redirects := .never }
+  match typedStatus with
+  | .status raw => check (raw.status == .found) "typed request preserves redirect policy"
+  | _ => throw <| IO.userError "FAIL: typed redirect status"
+
+  let typedTimeout : Outcome Inspection ← session.requestAs {
+    uri := serverUri port "slow/100", timeouts := { total := 10 } }
+  match typedTimeout with
+  | .transport { kind := .timeout, .. } => pure ()
+  | _ => throw <| IO.userError "FAIL: typed request timeout"
+
+  let typedDecode : Outcome Inspection ← session.getAs (serverUri port "echo")
+  match typedDecode with
+  | .decode message raw => check (!message.isEmpty && raw.status == .ok) "typed decode failure"
+  | _ => throw <| IO.userError "FAIL: typed decode failure classification"
+
+  let queried : Outcome (Array (String × String)) ← LeanHttp.requestAs <|
+    (LeanHttp.Request.get (serverUri port "query"))
+      |>.param "q+name" "a+b c&d=e"
+      |>.param "q+name" "東京%2B"
+  match queried with
+  | .ok values _ =>
+      check (values == #[("q+name", "a+b c&d=e"), ("q+name", "東京%2B")])
+        "query parameters round-trip on the wire, including repeated names and literal plus"
+  | _ => throw <| IO.userError "FAIL: typed query response"
+
+  let typedBody : Outcome String ← session.exchange .post (serverUri port "echo")
+    (LeanHttp.Body.form [("key", "a+b")])
+  match typedBody with
+  | .ok value _ => check (value == "key=a%2Bb") "Body codec supports form exchange"
+  | _ => throw <| IO.userError "FAIL: Body exchange codec"
+
+  let typedEmpty : Outcome Inspection ← session.exchange .get (serverUri port "inspect") ()
+  match typedEmpty with
+  | .ok value _ => check (value.method == "GET" && value.body.isEmpty) "Unit is an empty body"
+  | _ => throw <| IO.userError "FAIL: empty exchange codec"
+
   let missing ← expectOk (← session.request { uri := serverUri port "status/404" }) "404 response"
   check (missing.status == .notFound) "404 is response data"
 
@@ -180,6 +256,12 @@ def main : IO UInt32 := do
 
   let head ← expectOk (← session.request { method := .head, uri := serverUri port "echo" }) "HEAD"
   check (head.status == .ok && head.body.isEmpty) "HEAD returns headers without a body"
+
+  let headWithBody ← expectOk (← session.request {
+    method := .head, uri := serverUri port "echo", body := .json (.str "ignored") }) "HEAD with body"
+  check (headWithBody.body.isEmpty &&
+    (headWithBody.headers.get? headerName!"x-method").map toString == some "HEAD")
+    "a supplied body does not turn HEAD into POST or enable response bodies"
 
   let tiny ← expectOk (← Session.new { maxBody := some 16 }) "tiny session"
   match ← tiny.request { uri := serverUri port "large/17" } with

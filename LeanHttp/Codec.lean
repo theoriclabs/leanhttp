@@ -10,6 +10,8 @@ class ToBody (α : Type) where
 instance : ToBody Json := ⟨.json⟩
 instance : ToBody String := ⟨.text (Header.Value.ofString! "text/plain; charset=utf-8")⟩
 instance : ToBody ByteArray := ⟨.bytes (Header.Value.ofString! "application/octet-stream")⟩
+instance : ToBody Body := ⟨id⟩
+instance : ToBody Unit := ⟨fun _ => .empty⟩
 
 class FromBody (α : Type) where
   fromBody : Headers → ByteArray → Except String α
@@ -37,24 +39,32 @@ inductive Outcome (α : Type) where
   | decode (message : String) (response : Response)
   | transport (error : Error)
 
-def Session.exchange [ToBody β] [FromBody α] (session : Session) (method : Method)
-    (uri : URI) (payload : β) (headers : Headers := .empty) : IO (Outcome α) := do
-  match ← session.request { method, uri, headers, body := ToBody.toBody payload } with
+/-- Decode a successful response, retaining the raw response for HTTP status
+    and decoding failures. Non-2xx responses are never passed to the codec. -/
+def Response.decodeAs [FromBody α] (response : Response) : Outcome α :=
+  if !response.isSuccess then .status response
+  else match FromBody.fromBody response.headers response.body with
+    | .ok value => .ok value response
+    | .error message => .decode message response
+
+/-- Execute a fully configured request and decode its successful response. -/
+def Session.requestAs [FromBody α] (session : Session) (request : Request) : IO (Outcome α) := do
+  match ← session.request request with
   | .error e => return .transport e
-  | .ok response =>
-      unless response.isSuccess do return .status response
-      match FromBody.fromBody response.headers response.body with
-      | .ok value => return .ok value response
-      | .error e => return .decode e response
+  | .ok response => return response.decodeAs
+
+/-- Execute and decode a single request using a fresh session. -/
+def requestAs [FromBody α] (request : Request) : IO (Outcome α) := do
+  match ← LeanHttp.request request with
+  | .error e => return .transport e
+  | .ok response => return response.decodeAs
+
+def Session.exchange [ToBody β] [FromBody α] (session : Session) (method : Method)
+    (uri : URI) (payload : β) (headers : Headers := .empty) : IO (Outcome α) :=
+  session.requestAs { method, uri, headers, body := ToBody.toBody payload }
 
 def Session.getAs [FromBody α] (session : Session) (uri : URI)
-    (headers : Headers := .empty) : IO (Outcome α) := do
-  match ← session.request { uri, headers } with
-  | .error e => return .transport e
-  | .ok response =>
-      unless response.isSuccess do return .status response
-      match FromBody.fromBody response.headers response.body with
-      | .ok value => return .ok value response
-      | .error e => return .decode e response
+    (headers : Headers := .empty) : IO (Outcome α) :=
+  session.requestAs { uri, headers }
 
 end LeanHttp

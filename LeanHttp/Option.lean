@@ -45,7 +45,7 @@ inductive Opt : Type → Type where
   | caInfo : Opt System.FilePath
   | sslCert : Opt System.FilePath
   | sslKey : Opt System.FilePath
-  | userAgent : Opt String
+  | userAgent : Opt Std.Http.Header.Value
   | acceptEncoding : Opt Encoding
   | httpVersion : Opt HttpVersion
   | proxy : Opt Std.Http.URI
@@ -72,7 +72,7 @@ def Opt.set (h : FFI.Handle) : Opt α → α → IO Unit
   | .caInfo, path => FFI.setString h optCaInfo path.toString
   | .sslCert, path => FFI.setString h optSslCert path.toString
   | .sslKey, path => FFI.setString h optSslKey path.toString
-  | .userAgent, value => FFI.setString h optUserAgent value
+  | .userAgent, value => FFI.setString h optUserAgent (toString value)
   | .acceptEncoding, enc => FFI.setString h optAcceptEncoding <| match enc with
       | .identity => "identity"
       | .gzip => "gzip"

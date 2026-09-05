@@ -1,6 +1,7 @@
 import LeanHttp.Error
 import LeanHttp.Headers
 import LeanHttp.Option
+import LeanHttp.Version
 
 namespace LeanHttp
 
@@ -10,7 +11,8 @@ structure Session.Config where
   baseUri : Option URI := none
   headers : Headers := .empty
   tls : Tls := .system
-  userAgent : String := "leanhttp/0.1"
+  /-- A validated header value, excluding CR, LF, and NUL. -/
+  userAgent : Header.Value := Header.Value.ofString! s!"leanhttp/{packageVersion}"
   encoding : Encoding := .any
   httpVersion : HttpVersion := .default
   proxy : Option URI := none
@@ -90,10 +92,6 @@ def Session.request (session : Session) (request : Request) : IO (Except Error R
     FFI.reset h
     let uri := resolveUri session.config.baseUri request.uri
     Opt.url.set h uri
-    match request.method with
-    | .get => Opt.httpGet.set h ()
-    | .head => Opt.noBody.set h true
-    | method => Opt.customRequest.set h method
     Opt.timeout.set h request.timeouts.total
     Opt.connectTimeout.set h request.timeouts.connect
     match request.redirects with
@@ -111,9 +109,18 @@ def Session.request (session : Session) (request : Request) : IO (Except Error R
     unless session.config.noProxy.isEmpty do Opt.noProxy.set h session.config.noProxy
     if let some max := session.config.maxBody then Opt.maxFileSize.set h max
     let mut headers := overlayHeaders session.config.headers request.headers
-    if let some (contentType, bytes) ← bodyBytes request.body then
+    let encodedBody ← bodyBytes request.body
+    if let some (contentType, bytes) := encodedBody then
       headers := (headers.erase Header.Name.contentType).insert Header.Name.contentType contentType
       Opt.postFields.set h bytes
+    -- POSTFIELDS enables POST, so apply the requested method after the body.
+    -- HTTPGET would discard a supplied body; CUSTOMREQUEST preserves it for GET.
+    match request.method with
+    | .get =>
+        if encodedBody.isSome then Opt.customRequest.set h .get
+        else Opt.httpGet.set h ()
+    | .head => Opt.noBody.set h true
+    | method => Opt.customRequest.set h method
     FFI.setHeaders h (headerLines headers)
     let code ← FFI.perform h
     let rawHeaders ← FFI.responseHeaders h
