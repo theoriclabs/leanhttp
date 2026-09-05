@@ -54,17 +54,25 @@ def Session.requestAs [FromBody α] (session : Session) (request : Request) : IO
   | .ok response => return response.decodeAs
 
 /-- Execute and decode a single request using a fresh session. -/
-def requestAs [FromBody α] (request : Request) : IO (Outcome α) := do
-  match ← LeanHttp.request request with
+def requestAs [FromBody α] (request : Request) (config : Session.Config := {}) : IO (Outcome α) := do
+  match ← LeanHttp.request request config with
   | .error e => return .transport e
   | .ok response => return response.decodeAs
 
 def Session.exchange [ToBody β] [FromBody α] (session : Session) (method : Method)
-    (uri : URI) (payload : β) (headers : Headers := .empty) : IO (Outcome α) :=
+    (uri : Target) (payload : β) (headers : Headers := .empty) : IO (Outcome α) :=
   session.requestAs { method, uri, headers, body := ToBody.toBody payload }
 
-def Session.getAs [FromBody α] (session : Session) (uri : URI)
+def Session.getAs [FromBody α] (session : Session) (uri : Target)
     (headers : Headers := .empty) : IO (Outcome α) :=
   session.requestAs { uri, headers }
+
+/-- Start a typed one-shot request on its own dedicated worker and session. -/
+def requestAsTask [FromBody α] (request : Request) (config : Session.Config := {}) :
+    BaseIO (Task (Outcome α)) := do
+  let task ← requestTask request config
+  return task.map fun
+    | .error error => .transport error
+    | .ok response => response.decodeAs
 
 end LeanHttp

@@ -15,8 +15,8 @@ releasing. Describe observable behavior and any migration steps.
 3. Add the dated changelog section, leave an `Unreleased` section at the top,
    and update the release and comparison links.
 4. Run `lake test`. It compiles the DSL and invalid-literal checks, then runs the
-   local HTTP and forced loader-failure suites. These tests need loopback socket
-   access. Check README examples with the pinned Lean toolchain as well.
+   local HTTP, async, and forced loader-failure suites. These tests need loopback
+   socket access. Check README examples with the pinned Lean toolchain as well.
 5. Review the diff, commit the release changes, and confirm that the working
    tree is clean and the release includes the current remote `main`.
 

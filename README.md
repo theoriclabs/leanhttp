@@ -1,6 +1,6 @@
 # LeanHttp
 
-A synchronous HTTP client for Lean 4 backed by libcurl through a small C FFI.
+A synchronous and asynchronous HTTP client for Lean 4 backed by libcurl through a small C FFI.
 The public API reuses `Std.Http`'s validated methods, URIs, headers, and
 statuses. HTTP error statuses are ordinary responses; transport failures have
 typed, stable categories.
@@ -9,7 +9,7 @@ typed, stable categories.
 [[require]]
 name = "leanhttp"
 git = "https://github.com/theoriclabs/leanhttp"
-rev = "v0.2.0"
+rev = "v0.3.0"
 ```
 
 ```lean
@@ -76,8 +76,8 @@ remain available. `exchange` also accepts `Body` directly, or `()` for no body.
 
 ## Validated literals and URL components
 
-Opening `LeanHttp` (or `open scoped LeanHttp`) enables `uri!`, `headerName!`, and
-`headerValue!`. Invalid literals fail during compilation. URI literals validate
+Opening `LeanHttp` (or `open scoped LeanHttp`) enables `uri!`, `target!`,
+`headerName!`, and `headerValue!`. Invalid literals fail during compilation. URI literals validate
 URI syntax; they do not check whether a server exists or supports HTTP. For
 dynamic strings, use `Std.Http.URI.parse?`, `Header.Name.ofString?`, and
 `Header.Value.ofString?` from `Std.Http`.
@@ -109,9 +109,101 @@ example, use `{ userAgent := headerValue!"my-client/1.0" }`. For a runtime value
 validate it with `Std.Http.Header.Value.ofString?` before creating the session.
 This prevents CR, LF, and NUL from reaching libcurl through the user-agent option.
 
-The `uri` field continues to use `Std.Http.URI`. Relative strings such as
-`"/users"` are not URI literals; construct an absolute URI before building a
-request. General relative-reference parsing is not part of this release.
+## Absolute and relative targets
+
+`Request.uri` uses the inductive `Target` type: `.absolute URI` or
+`.relative RelativeRef`. Existing `uri!` values and parsed `Std.Http.URI`s coerce
+to absolute targets. Use `target!` for checked relative or absolute targets and
+`Target.parse?` for dynamic strings.
+
+```lean
+import LeanHttp
+
+open LeanHttp
+
+def relativeRequest (userId : String) : Request :=
+  (Request.get target!"users")
+    |>.segment userId
+    |>.param "expand" "team"
+
+def fetchUser (userId : String) : IO (Outcome Lean.Json) :=
+  requestAs (relativeRequest userId) {
+    baseUri := some uri!"https://api.example.com/v1/"
+  }
+```
+
+The base above resolves `users` to `/v1/users`; `/users` replaces the base path.
+Relative paths merge with the base's directory, so a base ending in `/v1/index`
+also resolves `users` to `/v1/users`. Dot segments such as `../users` are resolved
+before sending. Missing bases return a `.urlMalformed` error.
+
+`RelativeRef.query : Option Std.Http.URI.Query` distinguishes an omitted query
+from an explicitly empty one. An empty reference inherits the base path and query;
+`target!"?"` inherits its path and clears its query. `target!"?page=2"` replaces
+the query. Relative references never replace the base's authority. Scheme-relative
+strings such as `//other.example/path` are rejected; supply an explicit absolute
+URL when changing hosts. Absolute targets must have an HTTP(S) scheme and an
+authority, and ignore the base. `Target.resolve` exposes these checks as a pure
+function returning an inductive `Target.Error`.
+
+Migration from 0.2: code that reads `Request.uri` directly now receives a
+`Target`; match its `.absolute` and `.relative` cases or call `.resolve` with a
+base. `Response.effectiveUri` still contains the final `Std.Http.URI`.
+
+## Async requests and bounded batches
+
+`requestAsync` and `requestAsAsync` return `Std.Async.Async` actions with the
+same raw results and typed `Outcome` cases as synchronous calls. Each accepts
+an optional `Session.Config` and runs its blocking libcurl transfer on a dedicated
+worker with its own session. Awaiting it suspends through Lean's task scheduler.
+
+```lean
+import LeanHttp
+
+open LeanHttp
+
+structure UserResult where
+  name : String
+  deriving Lean.FromJson
+
+def fetchUsers : Std.Async.Async (Array (Outcome UserResult)) :=
+  requestManyAsAsync #[
+    Request.get target!"users/1",
+    Request.get target!"users/2"
+  ] {
+    concurrency := 4
+    session := { baseUri := some uri!"https://api.example.com/v1/" }
+  }
+
+def fetchUsersIO : IO (Array (Outcome UserResult)) :=
+  Std.Async.Async.block fetchUsers
+```
+
+`requestManyAsync` returns raw responses; `requestManyAsAsync` decodes each
+response independently. Results stay in input order, and one failed request does
+not stop the others. Each batch creates at most `min(concurrency, request count)`
+workers. Each worker reuses one session and takes requests from a shared queue.
+The limit is per batch; independent one-shot calls each start their own worker.
+
+`Concurrency` requires a proof that its value is positive. Numeric literals such
+as `4` work directly; use `Concurrency.ofNat?` for runtime counts. Zero is rejected.
+Empty batches create no workers or sessions. Batches collect all results in memory;
+`Batch.Config.session.maxBody` can limit each response body.
+
+For code using `Task` directly, use `requestTask`, `requestAsTask`,
+`requestManyTask`, or `requestManyAsTask`. These return `BaseIO (Task ...)` and
+start work when that `BaseIO` action runs. Async actions start when executed.
+Synchronous `Session` handles are not shared by these operations.
+
+This backend uses dedicated threads, not libcurl's multi interface. There is no
+transfer cancellation API: dropping a task or abandoning an async branch does
+not abort an in-flight transfer. Its worker still owns and closes the session
+when the operation completes. Configure request timeouts accordingly; they begin
+when a worker starts the request and exclude queueing time. A zero total timeout
+allows an operation to run indefinitely.
+
+The [design proposal](docs/proposals/0001-targets-and-async.md) records the API,
+ownership rules, compatibility changes, and deferred work.
 
 ## Runtime and development
 

@@ -2,6 +2,13 @@ import LeanHttp.Types
 
 namespace LeanHttp
 
+/-- A checked absolute or relative HTTP request target. Use `Target.parse?`
+    for dynamic strings; relative targets require a configured base URI. -/
+scoped macro:max "target!" value:str : term => do
+  if (LeanHttp.Target.parse? value.getString).isNone then
+    Lean.Macro.throwErrorAt value "invalid request target literal"
+  `(Option.get! (LeanHttp.Target.parse? $value))
+
 /-- A URI literal validated at compile time. Use `Std.Http.URI.parse?` for
     dynamic strings. This checks URI syntax, not HTTP protocol support. -/
 scoped macro:max "uri!" value:str : term => do

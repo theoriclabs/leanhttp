@@ -16,3 +16,7 @@ root = "TestMain"
 [[lean_exe]]
 name = "loader_failure"
 root = "LoaderFailure"
+
+[[lean_exe]]
+name = "async_tests"
+root = "AsyncMain"

@@ -52,16 +52,6 @@ private def bodyBytes : Body → IO (Option (Header.Value × ByteArray))
         encoded := encoded ++ [s!"{← FFI.escape name}={← FFI.escape value}"]
       pure (some (Header.Value.ofString! "application/x-www-form-urlencoded", (String.intercalate "&" encoded).toUTF8))
 
-private def resolveUri (base : Option URI) (uri : URI) : URI :=
-  match base, uri.authority with
-  | some b, none => {
-      scheme := b.scheme
-      authority := b.authority
-      path := if uri.path.isEmpty then b.path else b.path.join uri.path
-      query := uri.query
-      fragment := uri.fragment }
-  | _, _ => uri
-
 private def configureTls (h : FFI.Handle) : Tls → IO Unit
   | .system => do
       Opt.sslVerifyPeer.set h true
@@ -87,52 +77,57 @@ private def configureAuth (h : FFI.Handle) : Auth → IO Unit
   | .bearer token => Opt.bearer.set h token
 
 def Session.request (session : Session) (request : Request) : IO (Except Error Response) := do
-  catchCurl do
-    let h := session.handle
-    FFI.reset h
-    let uri := resolveUri session.config.baseUri request.uri
-    Opt.url.set h uri
-    Opt.timeout.set h request.timeouts.total
-    Opt.connectTimeout.set h request.timeouts.connect
-    match request.redirects with
-    | .never => Opt.followLocation.set h false
-    | .upTo n =>
-        Opt.followLocation.set h true
-        Opt.maxRedirs.set h n
-    configureTls h session.config.tls
-    configureAuth h request.auth
-    Opt.userAgent.set h session.config.userAgent
-    Opt.acceptEncoding.set h session.config.encoding
-    Opt.httpVersion.set h session.config.httpVersion
-    Opt.tcpKeepAlive.set h session.config.tcpKeepAlive
-    if let some proxy := session.config.proxy then Opt.proxy.set h proxy
-    unless session.config.noProxy.isEmpty do Opt.noProxy.set h session.config.noProxy
-    if let some max := session.config.maxBody then Opt.maxFileSize.set h max
-    let mut headers := overlayHeaders session.config.headers request.headers
-    let encodedBody ← bodyBytes request.body
-    if let some (contentType, bytes) := encodedBody then
-      headers := (headers.erase Header.Name.contentType).insert Header.Name.contentType contentType
-      Opt.postFields.set h bytes
-    -- POSTFIELDS enables POST, so apply the requested method after the body.
-    -- HTTPGET would discard a supplied body; CUSTOMREQUEST preserves it for GET.
-    match request.method with
-    | .get =>
-        if encodedBody.isSome then Opt.customRequest.set h .get
-        else Opt.httpGet.set h ()
-    | .head => Opt.noBody.set h true
-    | method => Opt.customRequest.set h method
-    FFI.setHeaders h (headerLines headers)
-    let code ← FFI.perform h
-    let rawHeaders ← FFI.responseHeaders h
-    let body ← FFI.responseBody h
-    let effective ← FFI.effectiveUrl h
-    let some status := Status.ofCode none code.toUInt16
-      | throw <| IO.userError s!"libcurl returned invalid HTTP status {code}"
-    let parsedHeaders ← match parseHeaderBlock rawHeaders with
-      | .ok h => pure h
-      | .error e => throw <| IO.userError e
-    let effectiveUri := (URI.parse? effective).getD uri
-    return { status, headers := parsedHeaders, body, effectiveUri }
+  match request.uri.resolve session.config.baseUri with
+  | .error .unsupportedScheme => return .error {
+      kind := .unsupportedProtocol, code := ⟨1⟩,
+      message := "unsupported protocol", detail := "HTTP targets require an http or https scheme" }
+  | .error reason => return .error (Error.url (toString reason))
+  | .ok uri =>
+    catchCurl do
+      let h := session.handle
+      FFI.reset h
+      Opt.url.set h uri
+      Opt.timeout.set h request.timeouts.total
+      Opt.connectTimeout.set h request.timeouts.connect
+      match request.redirects with
+      | .never => Opt.followLocation.set h false
+      | .upTo n =>
+          Opt.followLocation.set h true
+          Opt.maxRedirs.set h n
+      configureTls h session.config.tls
+      configureAuth h request.auth
+      Opt.userAgent.set h session.config.userAgent
+      Opt.acceptEncoding.set h session.config.encoding
+      Opt.httpVersion.set h session.config.httpVersion
+      Opt.tcpKeepAlive.set h session.config.tcpKeepAlive
+      if let some proxy := session.config.proxy then Opt.proxy.set h proxy
+      unless session.config.noProxy.isEmpty do Opt.noProxy.set h session.config.noProxy
+      if let some max := session.config.maxBody then Opt.maxFileSize.set h max
+      let mut headers := overlayHeaders session.config.headers request.headers
+      let encodedBody ← bodyBytes request.body
+      if let some (contentType, bytes) := encodedBody then
+        headers := (headers.erase Header.Name.contentType).insert Header.Name.contentType contentType
+        Opt.postFields.set h bytes
+      -- POSTFIELDS enables POST, so apply the requested method after the body.
+      -- HTTPGET would discard a supplied body; CUSTOMREQUEST preserves it for GET.
+      match request.method with
+      | .get =>
+          if encodedBody.isSome then Opt.customRequest.set h .get
+          else Opt.httpGet.set h ()
+      | .head => Opt.noBody.set h true
+      | method => Opt.customRequest.set h method
+      FFI.setHeaders h (headerLines headers)
+      let code ← FFI.perform h
+      let rawHeaders ← FFI.responseHeaders h
+      let body ← FFI.responseBody h
+      let effective ← FFI.effectiveUrl h
+      let some status := Status.ofCode none code.toUInt16
+        | throw <| IO.userError s!"libcurl returned invalid HTTP status {code}"
+      let parsedHeaders ← match parseHeaderBlock rawHeaders with
+        | .ok h => pure h
+        | .error e => throw <| IO.userError e
+      let effectiveUri := (URI.parse? effective).getD uri
+      return { status, headers := parsedHeaders, body, effectiveUri }
 
 def Session.withSession (config : Session.Config := {}) (k : Session → IO α) :
     IO (Except Error α) := do
@@ -147,18 +142,18 @@ def Session.withSession (config : Session.Config := {}) (k : Session → IO α) 
         session.close
         return .error (Error.fromIO e)
 
-def request (request : Request) : IO (Except Error Response) := do
-  match ← Session.new with
+def request (request : Request) (config : Session.Config := {}) : IO (Except Error Response) := do
+  match ← Session.new config with
   | .error e => return .error e
   | .ok session =>
       let result ← session.request request
       session.close
       return result
 
-def get (uri : URI) (headers : Headers := .empty) : IO (Except Error Response) :=
+def get (uri : Target) (headers : Headers := .empty) : IO (Except Error Response) :=
   request { uri, headers }
 
-def post (uri : URI) (body : Body) (headers : Headers := .empty) : IO (Except Error Response) :=
+def post (uri : Target) (body : Body) (headers : Headers := .empty) : IO (Except Error Response) :=
   request { method := .post, uri, body, headers }
 
 def requestUrl (method : Method) (url : String) (body : Body := .empty)
@@ -173,8 +168,8 @@ def postUrl (url : String) (body : Body) (headers : Headers := .empty) :
     IO (Except Error Response) :=
   requestUrl .post url body headers
 
-def requestTask (request : Request) : BaseIO (Task (Except Error Response)) := do
-  let task ← IO.asTask (LeanHttp.request request) Task.Priority.dedicated
+def requestTask (request : Request) (config : Session.Config := {}) : BaseIO (Task (Except Error Response)) := do
+  let task ← IO.asTask (LeanHttp.request request config) Task.Priority.dedicated
   return task.map fun
     | .ok result => result
     | .error e => .error (Error.fromIO e)

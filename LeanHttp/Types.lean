@@ -1,4 +1,5 @@
 import Std.Http
+import LeanHttp.Target
 import Std.Time
 import Lean
 
@@ -52,7 +53,7 @@ inductive HttpVersion where
 
 structure Request where
   method : Method := .get
-  uri : URI
+  uri : Target
   headers : Headers := .empty
   body : Body := .empty
   redirects : Redirects := .upTo 10

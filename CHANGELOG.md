@@ -5,6 +5,49 @@ are published as `vX.Y.Z` Git tags and GitHub releases.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-05
+
+### Added
+
+- Inductive absolute/relative `Target` values, `RelativeRef`, checked `target!`
+  literals, dynamic target parsing, and pure resolution with typed errors.
+- Relative paths, directory merging, dot-segment removal, and explicit omitted
+  versus empty query semantics for session base URIs.
+- `requestAsync` and `requestAsAsync` integration with `Std.Async`, using a
+  dedicated worker and session for each one-shot request.
+- `requestAsTask` and bounded batch APIs: `requestManyTask`, `requestManyAsTask`,
+  `requestManyAsync`, and `requestManyAsAsync`.
+- A strictly positive `Concurrency` type and `Batch.Config`. Batch workers reuse
+  their own sessions, consume a shared queue, and preserve input result order.
+- Optional session configuration for `request`, `requestAs`, and `requestTask`.
+- A design proposal covering target semantics, async scheduling, ownership,
+  timeout behavior, cancellation limits, and future backend choices.
+- Regression tests for target resolution, async overlap, concurrency bounds,
+  connection reuse, result ordering, independent failure handling, and loader
+  failures in batches.
+
+### Changed
+
+- `Request.uri` now has type `Target`. Existing URI arguments coerce to
+  `.absolute`; code inspecting the field must handle the two target cases or
+  resolve it first. `Response.effectiveUri` remains a `Std.Http.URI`.
+- Request constructors and URI-taking request helpers accept `Target`.
+- Absolute requests must have an HTTP(S) scheme, authority, and an empty or
+  slash-prefixed path. They no longer inherit the base merely because an
+  authority was absent. Use an explicit
+  relative target for base-URI requests. Scheme-relative `//host/path` targets
+  are rejected; changing authority requires an explicit absolute URI.
+- The package version and default user agent are now `0.3.0` and `leanhttp/0.3.0`.
+
+### Async behavior
+
+- Transfers use blocking libcurl on dedicated threads. Async waits suspend
+  through Lean's task scheduler; batches bound worker threads and sessions.
+- Timeouts start at transfer execution, excluding batch queue time.
+- Dropping a task or abandoning an async branch does not cancel a transfer.
+  Workers close their sessions after completion or timeout. Persistent pools,
+  streaming, and transfer cancellation are deferred.
+
 ## [0.2.0] - 2026-09-05
 
 ### Added
@@ -52,5 +95,6 @@ Initial source version; no GitHub release was published for this version.
   timeouts, response limits, and dedicated request tasks.
 - In-process HTTP and library-loader failure test suites.
 
-[Unreleased]: https://github.com/theoriclabs/leanhttp/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/theoriclabs/leanhttp/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/theoriclabs/leanhttp/releases/tag/v0.3.0
 [0.2.0]: https://github.com/theoriclabs/leanhttp/releases/tag/v0.2.0

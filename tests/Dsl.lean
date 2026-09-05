@@ -91,3 +91,69 @@ example (session : Session) (input : User) (token : String) : IO (Outcome User) 
     |>.json input
     |>.bearer token
   session.requestAs { req with timeouts := { total := 5000 } }
+
+private def resolved (reference : String) : Option String := do
+  let target ← Target.parse? reference
+  let uri ← (target.resolve (some uri!"http://a/b/c/d;p?q")).toOption
+  return toString uri
+
+-- RFC 3986 reference-resolution cases within the supported same-authority subset.
+#guard ([
+  ("g", "http://a/b/c/g"), ("./g", "http://a/b/c/g"),
+  ("g/", "http://a/b/c/g/"), ("/g", "http://a/g"),
+  ("?y", "http://a/b/c/d;p?y"), ("g?y", "http://a/b/c/g?y"),
+  ("#s", "http://a/b/c/d;p?q#s"), ("g#s", "http://a/b/c/g#s"),
+  ("g?y#s", "http://a/b/c/g?y#s"), (";x", "http://a/b/c/;x"),
+  ("", "http://a/b/c/d;p?q"), ("?", "http://a/b/c/d;p"),
+  (".", "http://a/b/c/"), ("./", "http://a/b/c/"),
+  ("..", "http://a/b/"), ("../", "http://a/b/"),
+  ("../g", "http://a/b/g"), ("../..", "http://a/"),
+  ("../../g", "http://a/g"), ("../../../g", "http://a/g"),
+  ("/./g", "http://a/g"), ("/../g", "http://a/g"),
+  ("g/./h", "http://a/b/c/g/h"), ("g/../h", "http://a/b/c/h"),
+  ("g?y/../x", "http://a/b/c/g?y/../x"),
+  ("g#s/../x", "http://a/b/c/g#s/../x"),
+  ("%2E%2E/g", "http://a/b/c/%2E%2E/g"),
+  ("http://other.example/x", "http://other.example/x")
+] : List (String × String)).all (fun (input, expected) => resolved input == some expected)
+
+#guard ((target!"g").resolve (some uri!"http://example.com")).toOption.map toString ==
+  some "http://example.com/g"
+#guard ((target!"/g").resolve (some uri!"http://example.com/base/")).toOption.map toString ==
+  some "http://example.com/g"
+#guard ((target!"g").resolve (some uri!"http://example.com/base/")).toOption.map toString ==
+  some "http://example.com/base/g"
+#guard ((target!"/g").resolve).toOption.isNone
+#guard ((target!"/g").resolve (some uri!"http:base")).toOption.isNone
+#guard ((target!"http:relative").resolve (some uri!"http://example.com")).toOption.isNone
+#guard ((target!"ftp://example.com").resolve).toOption.isNone
+#guard (Target.parse? "//other.example/path").isNone
+#guard (Target.parse? "http://").isNone
+#guard (Target.parse? "http:///path").isNone
+#guard (RelativeRef.parse? "g:h").isNone
+
+-- Std.URI validates components but permits this inconsistent combination when
+-- built directly. Do not serialize it as a different host (example.comusers).
+private def badAuthorityPath : URI := {
+  uri!"http://example.com" with path := (target!"users").path }
+#guard ((Target.absolute badAuthorityPath).resolve).toOption.isNone
+#guard ((target!"").resolve (some badAuthorityPath)).toOption.isNone
+
+/-- error: invalid request target literal -/
+#guard_msgs in
+#check target!"//other.example/path"
+
+/-- error: invalid request target literal -/
+#guard_msgs in
+#check target!"/bad path"
+
+#guard toString ((LeanHttp.Request.get target!"users")
+  |>.segment "a/b"
+  |>.param "q" "a+b").uri == "users/a%2Fb?q=a%2Bb"
+
+#guard (Concurrency.ofNat? 0).isNone
+#guard (Concurrency.ofNat? 3).map (·.val) == some 3
+#guard (2 : Concurrency).val == 2
+example (limit : Concurrency) : limit.val ≠ 0 := by
+  have := limit.positive
+  omega

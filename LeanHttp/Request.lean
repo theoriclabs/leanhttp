@@ -10,22 +10,22 @@ def Body.ofJson [Lean.ToJson α] (value : α) : Body :=
   .json (Lean.toJson value)
 
 /-- Construct a GET request. The returned record can still be updated normally. -/
-def Request.get (uri : URI) : Request := { uri }
+def Request.get (uri : Target) : Request := { uri }
 
 /-- Construct a POST request. -/
-def Request.post (uri : URI) : Request := { method := .post, uri }
+def Request.post (uri : Target) : Request := { method := .post, uri }
 
 /-- Construct a PUT request. -/
-def Request.put (uri : URI) : Request := { method := .put, uri }
+def Request.put (uri : Target) : Request := { method := .put, uri }
 
 /-- Construct a PATCH request. -/
-def Request.patch (uri : URI) : Request := { method := .patch, uri }
+def Request.patch (uri : Target) : Request := { method := .patch, uri }
 
 /-- Construct a DELETE request. -/
-def Request.delete (uri : URI) : Request := { method := .delete, uri }
+def Request.delete (uri : Target) : Request := { method := .delete, uri }
 
 /-- Construct a HEAD request. -/
-def Request.head (uri : URI) : Request := { method := .head, uri }
+def Request.head (uri : Target) : Request := { method := .head, uri }
 
 /-- Replace the request body with a JSON-encoded value. -/
 def Request.json [Lean.ToJson α] (request : Request) (value : α) : Request :=
@@ -58,14 +58,12 @@ private def encodeQueryParam (value : String) : URI.EncodedQueryParam :=
 /-- Append a query parameter, encoding the raw name and value. Repeated names
     are preserved in order. Pass unescaped strings to avoid double encoding. -/
 def Request.param (request : Request) (name value : String) : Request :=
-  { request with uri := { request.uri with
-      query := request.uri.query.insertEncoded (encodeQueryParam name) (some (encodeQueryParam value)) } }
+  { request with uri := request.uri.withQuery <|
+      request.uri.query.insertEncoded (encodeQueryParam name) (some (encodeQueryParam value)) }
 
 /-- Append one raw path segment using Std's percent encoding. A slash in the
     value stays within that segment. Existing path segments are preserved. -/
 def Request.segment (request : Request) (value : String) : Request :=
-  let path := request.uri.path.append value
-  let path := if request.uri.authority.isSome then { path with absolute := true } else path
-  { request with uri := { request.uri with path } }
+  { request with uri := request.uri.segment value }
 
 end LeanHttp

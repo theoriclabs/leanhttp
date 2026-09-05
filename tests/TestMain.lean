@@ -88,8 +88,21 @@ def main : IO UInt32 := do
   let port := boundAddr.port
 
   let session ← expectOk (← Session.new {
+    baseUri := some (serverUri port "base/index")
     headers := Headers.empty.insert! "X-Default" "yes" |>.insert! "X-Override" "old"
     maxBody := some (8 * 1024 * 1024) }) "new session"
+
+  let relative : Outcome Inspection ← session.requestAs (LeanHttp.Request.get target!"../inspect")
+  match relative with
+  | .ok value raw =>
+      check (value.method == "GET" && raw.effectiveUri == serverUri port "inspect")
+        "relative target resolves against the base directory"
+  | _ => throw <| IO.userError "FAIL: relative target request"
+
+  let missingBase ← LeanHttp.request (LeanHttp.Request.get target!"/inspect")
+  match missingBase with
+  | .error { kind := .urlMalformed, .. } => pure ()
+  | _ => throw <| IO.userError "FAIL: relative target without base"
 
   let payload : ByteArray := ByteArray.mk #[0, 1, 2, 0, 255]
   let echoed ← expectOk (← session.request {
