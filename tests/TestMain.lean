@@ -50,6 +50,8 @@ private def handler (request : Request Body.Stream) : ContextAsync (Response Bod
       let values := request.line.uri.query.toArray.map fun (name, value) =>
         (name.decode.getD "<invalid>", value.bind (·.decode) |>.getD "<invalid>")
       response .ok (Lean.toJson values).compress.toUTF8
+  | "path" :: _ =>
+      response .ok (toString request.line.uri).toUTF8
   | ["status", code] =>
       let code := code.toNat?.getD 500 |>.toUInt16
       let status := (Status.ofCode none code).getD .internalServerError
@@ -103,6 +105,17 @@ def main : IO UInt32 := do
   match missingBase with
   | .error { kind := .urlMalformed, .. } => pure ()
   | _ => throw <| IO.userError "FAIL: relative target without base"
+
+  -- Check the serialized request at the server too: libcurl must not turn raw
+  -- dot-segment data into parent/current-directory navigation.
+  for (value, encoded) in [(".", "%2E"), ("..", "%2E%2E"),
+      ("a/b", "a%2Fb"), ("a:b", "a:b"), ("a b", "a%20b")] do
+    for target in [Target.absolute (serverUri port "path"), target!"../path"] do
+      let received : Outcome String ← session.requestAs <|
+        (LeanHttp.Request.get target).segment value
+      match received with
+      | .ok path _ => check (path == s!"/path/{encoded}") s!"raw path segment {value} reaches server intact"
+      | _ => throw <| IO.userError s!"FAIL: raw path segment {value} changed destination"
 
   let payload : ByteArray := ByteArray.mk #[0, 1, 2, 0, 255]
   let echoed ← expectOk (← session.request {

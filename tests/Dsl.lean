@@ -157,3 +157,34 @@ private def badAuthorityPath : URI := {
 example (limit : Concurrency) : limit.val ≠ 0 := by
   have := limit.positive
   omega
+
+-- Raw appended segments are data; only literal reference syntax navigates.
+#guard toString ((LeanHttp.Request.get target!"users").segment ".").uri == "users/%2E"
+#guard toString ((LeanHttp.Request.get target!"users").segment "..").uri == "users/%2E%2E"
+#guard (((LeanHttp.Request.get target!"users").segment "..").uri.resolve
+  (some uri!"https://example.com/api/index")).toOption.map toString ==
+  some "https://example.com/api/users/%2E%2E"
+
+-- Serialization must preserve the relative case and the resolved destination,
+-- including paths constructed directly from valid Std components.
+private def relativeRoundTrip (reference : RelativeRef) : Bool :=
+  match Target.parse? (toString reference) with
+  | some (.relative parsed) =>
+      let base := some uri!"https://example.com/api/index?old=1"
+      ((Target.relative parsed).resolve base).toOption ==
+        ((Target.relative reference).resolve base).toOption
+  | _ => false
+
+#guard (RelativeRef.parse? "users#hello%20world%23part").map relativeRoundTrip == some true
+#guard (RelativeRef.parse? "#caf%C3%A9%25").map relativeRoundTrip == some true
+#guard relativeRoundTrip { path := { segments := #[URI.EncodedSegment.encode "a:b"], absolute := false } }
+#guard relativeRoundTrip { path := { segments := #[URI.EncodedString.empty], absolute := false } }
+#guard relativeRoundTrip { path := { segments := #[URI.EncodedString.empty, URI.EncodedSegment.encode "host"], absolute := false } }
+#guard relativeRoundTrip { path := { segments := #[URI.EncodedString.empty, URI.EncodedSegment.encode "host"], absolute := true } }
+#guard toString ((LeanHttp.Request.get target!"").segment "a:b").uri == "./a:b"
+#guard toString target!"users#hello%20world%23part" == "users#hello%20world%23part"
+
+#guard ((target!"http://example.com/a/../b/.").resolve).toOption.map toString ==
+  some "http://example.com/b/"
+#guard ((target!"http://example.com/a/%2E%2E/b").resolve).toOption.map toString ==
+  some "http://example.com/a/%2E%2E/b"

@@ -9,7 +9,7 @@ typed, stable categories.
 [[require]]
 name = "leanhttp"
 git = "https://github.com/theoriclabs/leanhttp"
-rev = "v0.3.0"
+rev = "v0.3.1"
 ```
 
 ```lean
@@ -99,6 +99,9 @@ Pass raw strings to `.segment` and `.param`. For example, the segment `"a/b"`
 becomes `a%2Fb`, and the query value `"a+b c"` becomes `a%2Bb+c`. Repeated query
 names are appended in order. `.segment` appends one segment to the existing path;
 it preserves any existing empty segments and trailing separators.
+Literal `"."` and `".."` segment values become `%2E` and `%2E%2E`, so dynamic
+identifiers remain data when resolved and sent. For directory navigation, use
+reference syntax such as `target!"../users"` instead of `.segment ".."`.
 
 `.header` replaces all request headers with the same name; `.addHeader` appends
 another value. Request headers override session defaults, and a nonempty `Body`
@@ -145,6 +148,12 @@ strings such as `//other.example/path` are rejected; supply an explicit absolute
 URL when changing hosts. Absolute targets must have an HTTP(S) scheme and an
 authority, and ignore the base. `Target.resolve` exposes these checks as a pure
 function returning an inductive `Target.Error`.
+
+Resolution removes literal dot segments from absolute URLs as well as nonempty
+relative paths, preserving percent-encoded segment data. Serializing relative
+references escapes fragments and adds a dot prefix when necessary to preserve
+their meaning: appending `"a:b"` to an empty relative target prints `./a:b`, so
+parsing it again cannot turn it into an absolute URI.
 
 Migration from 0.2: code that reads `Request.uri` directly now receives a
 `Target`; match its `.absolute` and `.relative` cases or call `.resolve` with a

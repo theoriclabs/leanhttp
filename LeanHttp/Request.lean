@@ -61,8 +61,8 @@ def Request.param (request : Request) (name value : String) : Request :=
   { request with uri := request.uri.withQuery <|
       request.uri.query.insertEncoded (encodeQueryParam name) (some (encodeQueryParam value)) }
 
-/-- Append one raw path segment using Std's percent encoding. A slash in the
-    value stays within that segment. Existing path segments are preserved. -/
+/-- Append one raw path segment as data. Slashes and literal `.`/`..` values
+    are percent-encoded. Existing path segments are preserved. -/
 def Request.segment (request : Request) (value : String) : Request :=
   { request with uri := request.uri.segment value }
 

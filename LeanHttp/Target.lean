@@ -48,9 +48,20 @@ def Target.parse? (value : String) : Option Target :=
 
 instance : ToString RelativeRef where
   toString reference :=
+    let path := toString reference.path
+    -- Valid path components can still spell a scheme or authority when joined.
+    -- A dot prefix preserves resolution while keeping serialization relative.
+    -- It also distinguishes an appended empty segment from an absent path.
+    let path := if reference.path.absolute then
+        if path.startsWith "//" then "/." ++ path else path
+      else if reference.path.segments[0]?.any (fun s =>
+          (toString s).isEmpty || (toString s).contains ":") then
+        "./" ++ path
+      else path
     let query := reference.query.map (fun q => "?" ++ q.toRawString) |>.getD ""
-    let fragment := reference.fragment.map ("#" ++ ·) |>.getD ""
-    toString reference.path ++ query ++ fragment
+    let fragment := reference.fragment.map (fun f =>
+      "#" ++ toString (URI.EncodedFragment.encode f)) |>.getD ""
+    path ++ query ++ fragment
 
 instance : ToString Target where
   toString
@@ -72,14 +83,23 @@ def Target.withQuery : Target → URI.Query → Target
   | .absolute uri, query => .absolute { uri with query }
   | .relative reference, query => .relative { reference with query := some query }
 
-/-- Append a raw segment, preserving the target's absolute/relative meaning. -/
+-- A raw value supplied by the caller is segment data, including '.' and '..'.
+-- Keep navigation explicit in reference syntax, and stop both our resolver and
+-- libcurl from interpreting these two data values as dot segments.
+private def encodeSegment (value : String) : URI.EncodedSegment :=
+  if value == "." then URI.EncodedSegment.ofByteArray! "%2E".toUTF8
+  else if value == ".." then URI.EncodedSegment.ofByteArray! "%2E%2E".toUTF8
+  else URI.EncodedSegment.encode value
+
+/-- Append a raw segment as data, preserving the target's absolute/relative
+    meaning. Literal `.` and `..` values are percent-encoded, not navigated. -/
 def Target.segment : Target → String → Target
   | .absolute uri, value =>
-      let path := uri.path.append value
+      let path := uri.path.appendEncoded (encodeSegment value)
       let path := if uri.authority.isSome then { path with absolute := true } else path
       .absolute { uri with path }
   | .relative reference, value =>
-      .relative { reference with path := reference.path.append value }
+      .relative { reference with path := reference.path.appendEncoded (encodeSegment value) }
 
 inductive Target.Error where
   | missingBase
@@ -120,7 +140,7 @@ def Target.resolve (target : Target) (base : Option URI := none) : Except Target
       unless isHttp uri do throw .unsupportedScheme
       unless uri.authority.isSome do throw .missingAuthority
       unless validPath uri do throw .invalidPath
-      return uri
+      return { uri with path := normalizePath uri.path }
   | .relative reference =>
       let some base := base | throw .missingBase
       unless isHttp base && base.authority.isSome && validPath base do throw .invalidBase

@@ -5,6 +5,29 @@ are published as `vX.Y.Z` Git tags and GitHub releases.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-05
+
+### Fixed
+
+- `Request.segment` and `Target.segment` encode literal `.` and `..` values as
+  path data. Previously, resolution or libcurl could interpret a dynamic
+  identifier as current- or parent-directory navigation.
+- Relative target serialization preserves relative meaning for first segments
+  containing `:`, leading empty segments, and an appended empty segment. It adds
+  a dot prefix when needed instead of producing an absolute or scheme-relative
+  reference, or dropping the distinction between an empty segment and no path.
+- Relative fragments are percent-encoded on serialization, so spaces, `#`,
+  Unicode, and literal percent characters round-trip through target parsing.
+- `Target.resolve` removes literal dot segments from absolute target paths,
+  matching its behavior for nonempty relative paths and preserving encoded dots.
+
+### Compatibility
+
+- Public API signatures are unchanged. For intentional directory navigation,
+  use reference syntax such as `target!"../users"`; `.segment ".."` now always
+  supplies a literal path segment.
+- The package version and default user agent are now `0.3.1` and `leanhttp/0.3.1`.
+
 ## [0.3.0] - 2026-09-05
 
 ### Added
@@ -95,6 +118,7 @@ Initial source version; no GitHub release was published for this version.
   timeouts, response limits, and dedicated request tasks.
 - In-process HTTP and library-loader failure test suites.
 
-[Unreleased]: https://github.com/theoriclabs/leanhttp/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/theoriclabs/leanhttp/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/theoriclabs/leanhttp/releases/tag/v0.3.1
 [0.3.0]: https://github.com/theoriclabs/leanhttp/releases/tag/v0.3.0
 [0.2.0]: https://github.com/theoriclabs/leanhttp/releases/tag/v0.2.0

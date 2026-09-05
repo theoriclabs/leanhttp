@@ -10,9 +10,9 @@ GET bodies and query `+` encoding. This proposal completes the request-target
 part of that design and defines asynchronous execution over the same request
 and result types.
 
-Two gaps remain. `Request.uri` cannot represent `/users` without inventing a
-scheme, while the session resolver guesses whether an absolute URI should use
-the base. Separately, `requestTask` offers one-shot concurrency but no
+Before 0.3.0, two gaps remained. `Request.uri` could not represent `/users`
+without inventing a scheme, while the session resolver guessed whether an
+absolute URI should use the base. Separately, `requestTask` offered one-shot concurrency but no
 `Std.Async` integration, session configuration, typed task results, or bounded
 batch execution.
 
@@ -146,3 +146,22 @@ failure coverage to async batches. Compile README and proposal examples.
 
 Maintain `CHANGELOG.md`, document migration and async limitations, bump to
 0.3.0, and publish the tested commit following `RELEASING.md`.
+
+## Post-release review: 0.3.1
+
+The 0.3.0 release completes the targets and async APIs above. Review against the
+changelog identified target-composition fixes as the next compatible step:
+
+- Treat raw values passed to `.segment` as data, including `.` and `..`.
+  Directory navigation remains explicit in parsed reference syntax.
+- Keep relative references relative after serialization and parsing. Prefix
+  ambiguous paths with `./` or `/.` as appropriate, and encode fragment data.
+  Preserve the resolution difference between an appended empty segment and
+  an absent path.
+- Apply dot-segment removal to absolute target paths during pure resolution,
+  just as for nonempty relative paths. Preserve percent-encoded dots.
+
+These fixes ship in 0.3.1 with pure round-trip tests and local HTTP tests that
+check the encoded path received by the server. Public signatures and async
+ownership rules are unchanged. The deferred backend and endpoint work still
+requires a separate proposal driven by concrete client requirements.
