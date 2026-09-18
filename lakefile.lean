@@ -8,9 +8,8 @@ package leanhttp where
   license := "MIT"
 
 -- WebSocket messages, close codes and fragment reassembly come from leanws, so
--- both clients present the same types. Required from a sibling checkout until
--- theoriclabs/leanws is published.
-require leanws from "../leanws"
+-- this client and LeanWs.Client present the same types.
+require leanws from git "https://github.com/theoriclabs/leanws" @ "v0.1.0"
 
 target leanhttp.o pkg : FilePath := do
   let oFile := pkg.buildDir / "leanhttp.o"

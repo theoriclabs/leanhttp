@@ -40,8 +40,8 @@ are published as `vX.Y.Z` Git tags and GitHub releases.
 - Additive except for `Error.Kind`, which gained two cases; exhaustive matches
   over it need updating. libcurl without WebSocket support keeps serving every
   HTTP request and degrades to the typed `.websocketUnsupported` error.
-- Building LeanHttp now requires leanws. Until `theoriclabs/leanws` is
-  published, `lakefile.lean` requires it from a sibling `../leanws` checkout.
+- Building LeanHttp now resolves one dependency, leanws `v0.1.0`, from
+  https://github.com/theoriclabs/leanws. Consumers pin leanhttp as before.
 - The package version and default user agent are now `0.4.0` and
   `leanhttp/0.4.0`.
 

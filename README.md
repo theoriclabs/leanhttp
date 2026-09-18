@@ -12,6 +12,9 @@ git = "https://github.com/theoriclabs/leanhttp"
 rev = "v0.4.0"
 ```
 
+LeanHttp resolves one dependency, [leanws](https://github.com/theoriclabs/leanws),
+for the WebSocket message types described below.
+
 ```lean
 import LeanHttp
 
