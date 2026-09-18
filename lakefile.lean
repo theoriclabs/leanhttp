@@ -3,9 +3,14 @@ import Lake
 open System Lake DSL
 
 package leanhttp where
-  version := v!"0.3.1"
-  keywords := #["http", "client", "curl", "ffi"]
+  version := v!"0.4.0"
+  keywords := #["http", "websocket", "client", "curl", "ffi"]
   license := "MIT"
+
+-- WebSocket messages, close codes and fragment reassembly come from leanws, so
+-- both clients present the same types. Required from a sibling checkout until
+-- theoriclabs/leanws is published.
+require leanws from "../leanws"
 
 target leanhttp.o pkg : FilePath := do
   let oFile := pkg.buildDir / "leanhttp.o"

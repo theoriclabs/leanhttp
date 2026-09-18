@@ -20,3 +20,7 @@ root = "LoaderFailure"
 [[lean_exe]]
 name = "async_tests"
 root = "AsyncMain"
+
+[[lean_exe]]
+name = "ws_tests"
+root = "WsMain"

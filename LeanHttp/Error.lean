@@ -30,6 +30,10 @@ inductive Error.Kind where
   | sendRecv
   | tooLarge
   | aborted
+  /-- The loaded libcurl has no WebSocket support. -/
+  | websocketUnsupported
+  /-- The peer violated the WebSocket protocol, or the handshake failed. -/
+  | websocketProtocol
   | other
   deriving DecidableEq, Repr
 
@@ -42,6 +46,7 @@ structure Error where
 
 private def messageOf : UInt32 → String
   | 1 => "unsupported protocol"
+  | 4 => "libcurl was built without WebSocket support"
   | 3 => "malformed URL"
   | 5 => "could not resolve proxy"
   | 6 => "could not resolve host"
@@ -62,10 +67,14 @@ private def messageOf : UInt32 → String
   | 63 => "response exceeded configured size"
   | 77 => "could not read CA certificate"
   | 9000 => "libcurl was not found"
+  | 9002 => "websocket protocol failure"
   | _ => "libcurl transport failure"
 
 def Error.kindOf : UInt32 → Error.Kind
   | 1 => .unsupportedProtocol
+  -- CURLE_NOT_BUILT_IN: only the WebSocket calls and the `ws` protocol reach
+  -- this client, so the code identifies missing WebSocket support.
+  | 4 => .websocketUnsupported
   | 3 => .urlMalformed
   | 5 => .couldntResolveProxy
   | 6 => .couldntResolveHost
@@ -81,6 +90,7 @@ def Error.kindOf : UInt32 → Error.Kind
   | 63 => .tooLarge
   | 77 => .ssl .caCert
   | 9000 => .libraryNotFound []
+  | 9002 => .websocketProtocol
   | _ => .other
 
 /-- Decode the `IO.Error.otherError` emitted by the FFI. -/

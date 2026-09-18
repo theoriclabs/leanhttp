@@ -9,7 +9,7 @@ typed, stable categories.
 [[require]]
 name = "leanhttp"
 git = "https://github.com/theoriclabs/leanhttp"
-rev = "v0.3.1"
+rev = "v0.4.0"
 ```
 
 ```lean
@@ -27,6 +27,8 @@ def main : IO Unit := do
 requests. It supports timeouts, bounded response bodies, redirects, TLS policy,
 basic and bearer authentication, proxies, compression, binary/text/JSON/form
 bodies, typed body codecs, and one-session-per-task concurrency.
+`LeanHttp.WebSocket` reuses the same configuration for `ws://` and `wss://`
+connections.
 
 ## Composing requests
 
@@ -214,20 +216,85 @@ allows an operation to run indefinitely.
 The [design proposal](docs/proposals/0001-targets-and-async.md) records the API,
 ownership rules, compatibility changes, and deferred work.
 
+## WebSocket connections
+
+`LeanHttp.WebSocket` speaks `ws://` and `wss://` through libcurl's WebSocket
+API, so TLS policy, proxies, the user agent and default headers come from the
+same `Session.Config` as HTTP requests. Messages, close codes, size limits and
+fragment reassembly are [leanws](https://github.com/theoriclabs/leanws) values,
+so a connection opened here carries exactly the messages `LeanWs.Client` does.
+
+```lean
+import LeanHttp
+import LeanWs
+
+open LeanHttp Std.Http
+
+def tail (token : String) : IO (Except LeanHttp.Error Unit) :=
+  WebSocket.withConnection target!"wss://app.example.com/channel" {
+    subprotocols := ["leanapp.v1"]
+    headers := Headers.empty.insert! "Cookie" s!"session={token}"
+  } fun connection => do
+    discard <| connection.send (.text "{\"subscribe\":\"doc-1\"}")
+    repeat
+      match ← connection.recv with
+      | .ok (some (.text text)) => IO.println text
+      | .ok (some (.binary bytes)) => IO.println s!"{bytes.size} bytes"
+      | .ok none => break
+      | .error error => throw <| IO.userError (toString error)
+```
+
+`recv` returns one complete message: it reassembles fragments, answers pings,
+drops pongs, and returns `none` once the peer has closed, with the status left
+in `closeInfo`. `Options.limits` bounds received frames and messages exactly as
+in `leanws`; a message over the limit closes the connection with `1009` and is
+reported as a `.websocketProtocol` error. A receive that exhausts `recvTimeout`
+is a `.timeout` error and leaves the connection usable. `close` sends the
+closing frame and releases the handle; `withConnection` does that on both the
+normal and the failing path.
+
+Subprotocols are offered in preference order and the server's choice is
+verified against them, so `Connection.subprotocol` never reports something that
+was not offered. Relative targets resolve against `Options.session.baseUri`,
+which must itself be a `ws://` or `wss://` URI; an `http://` target is rejected
+as `.unsupportedProtocol` rather than silently upgraded.
+
+A connection owns one easy handle and is no more thread-safe than a `Session`:
+one task owns it, and `recv` blocks that task's thread until a message arrives
+or its timeout expires. `connectAsync`, `Connection.sendAsync` and
+`Connection.recvAsync`, with the matching `Task` variants, move those blocking
+calls onto dedicated workers the way the HTTP async API does.
+
+libcurl gained the WebSocket API in 7.86 and can still be built without it.
+`WebSocket.supported` reports what the loaded library can do, and `connect`
+fails with a typed `.websocketUnsupported` error instead of a generic transport
+failure. There is no permessage-deflate and no cancellation API here either.
+
 ## Runtime and development
 
 At runtime LeanHttp loads `libcurl.4.dylib` on macOS or `libcurl.so.4` on
-Linux. Set `LEANHTTP_LIB` to force a particular library. Windows is not yet
+Linux. Set `LEANHTTP_LIB` to force a particular library. WebSocket connections
+additionally need a libcurl of 7.86 or later that lists the `ws` protocol;
+`WebSocket.supported` reports whether the loaded one does. Windows is not yet
 supported. Compilation also needs libcurl headers (provided by the macOS SDK;
 typically the distribution's libcurl development package on Linux). Consumer
 executables do not need a link-time `-lcurl` flag.
 
 Requires Lean `v4.33.0`.
 
-Run the in-process HTTP and loader-failure suites with:
+Run the in-process HTTP, WebSocket and loader-failure suites with:
 
 ```bash
 lake test
+```
+
+The WebSocket suite runs against an in-process `leanws` server. Where the
+system libcurl has no WebSocket support it checks the typed error and skips the
+round trips; point `LEANHTTP_LIB` at a WebSocket-capable libcurl to run them,
+and set `LEANHTTP_TLS_TEST_URL` to a `wss://` echo endpoint to add the TLS case:
+
+```bash
+LEANHTTP_LIB=/opt/homebrew/opt/curl/lib/libcurl.4.dylib lake test
 ```
 
 Changes are recorded in [CHANGELOG.md](CHANGELOG.md). Published versions are

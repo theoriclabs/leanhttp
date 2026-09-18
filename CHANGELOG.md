@@ -5,6 +5,46 @@ are published as `vX.Y.Z` Git tags and GitHub releases.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-18
+
+### Added
+
+- `LeanHttp.WebSocket`: a `ws://` and `wss://` client over libcurl's WebSocket
+  API (libcurl 7.86 and later). `connect`, `withConnection`, `Connection.send`,
+  `recv`, `ping` and `close`, with `connectAsync`, `Connection.sendAsync` and
+  `Connection.recvAsync` plus the matching `Task` variants for blocking calls on
+  dedicated workers. TLS policy, proxies, user agent and default headers come
+  from `Session.Config`; subprotocols and extra handshake headers come from
+  `WebSocket.Options`.
+- Messages, close codes, receive limits and fragment reassembly are
+  [leanws](https://github.com/theoriclabs/leanws) types, so LeanHttp and
+  `LeanWs.Client` present the same `LeanWs.Message` values. leanws is a new
+  package dependency.
+- `WebSocket.supported` and the `Error.Kind.websocketUnsupported` case report a
+  libcurl without WebSocket support, distinguishing it from a transport failure.
+  `Error.Kind.websocketProtocol` reports handshake and RFC 6455 failures,
+  including a message over `Options.limits`, which also closes with `1009`.
+- `Target.resolveIn` resolves a target against an explicit scheme set, with
+  `Target.httpSchemes` and `Target.webSocketSchemes`. `Target.resolve` keeps its
+  HTTP behavior.
+
+### Fixed
+
+- Requests set `CURLOPT_PATH_AS_IS`, so a percent-encoded `%2E` path segment
+  stays data. libcurl 8.10 and later decode it and then apply dot-segment
+  removal, which turned `.segment "."` into directory navigation on the wire.
+  `Target.resolve` already performs RFC 3986 dot-segment removal itself.
+
+### Compatibility
+
+- Additive except for `Error.Kind`, which gained two cases; exhaustive matches
+  over it need updating. libcurl without WebSocket support keeps serving every
+  HTTP request and degrades to the typed `.websocketUnsupported` error.
+- Building LeanHttp now requires leanws. Until `theoriclabs/leanws` is
+  published, `lakefile.lean` requires it from a sibling `../leanws` checkout.
+- The package version and default user agent are now `0.4.0` and
+  `leanhttp/0.4.0`.
+
 ## [0.3.1] - 2026-09-05
 
 ### Fixed

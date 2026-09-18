@@ -8,3 +8,4 @@ import LeanHttp.Headers
 import LeanHttp.Session
 import LeanHttp.Codec
 import LeanHttp.Async
+import LeanHttp.WebSocket

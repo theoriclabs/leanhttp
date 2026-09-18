@@ -117,8 +117,13 @@ instance Target.instToStringError : ToString Target.Error where
     | .invalidPath => "HTTP URI path must be empty or start with '/'"
     | .unsupportedScheme => "HTTP targets require an http or https scheme"
 
-private def isHttp (uri : URI) : Bool :=
-  toString uri.scheme == "http" || toString uri.scheme == "https"
+/-- The schemes a request target may carry. WebSocket targets use `ws` and
+    `wss`; everything else in this package is HTTP. -/
+def Target.httpSchemes : List String := ["http", "https"]
+def Target.webSocketSchemes : List String := ["ws", "wss"]
+
+private def hasScheme (schemes : List String) (uri : URI) : Bool :=
+  schemes.contains (toString uri.scheme)
 
 private def validPath (uri : URI) : Bool :=
   uri.path.absolute || uri.path.isEmpty
@@ -132,18 +137,20 @@ private def normalizePath (path : URI.Path) : URI.Path :=
     { normalized with segments := normalized.segments.push URI.EncodedString.empty }
   else normalized
 
-/-- Resolve an HTTP request target. Relative paths use RFC 3986 directory
-    merging, with explicit query-presence semantics and no authority replacement. -/
-def Target.resolve (target : Target) (base : Option URI := none) : Except Target.Error URI := do
+/-- Resolve a request target whose scheme must be one of `schemes`. Relative
+    paths use RFC 3986 directory merging, with explicit query-presence
+    semantics and no authority replacement. -/
+def Target.resolveIn (schemes : List String) (target : Target) (base : Option URI := none) :
+    Except Target.Error URI := do
   match target with
   | .absolute uri =>
-      unless isHttp uri do throw .unsupportedScheme
+      unless hasScheme schemes uri do throw .unsupportedScheme
       unless uri.authority.isSome do throw .missingAuthority
       unless validPath uri do throw .invalidPath
       return { uri with path := normalizePath uri.path }
   | .relative reference =>
       let some base := base | throw .missingBase
-      unless isHttp base && base.authority.isSome && validPath base do throw .invalidBase
+      unless hasScheme schemes base && base.authority.isSome && validPath base do throw .invalidBase
       let emptyPath := !reference.path.absolute && reference.path.isEmpty
       let path := if emptyPath then base.path
         else if reference.path.absolute then normalizePath reference.path
@@ -152,5 +159,9 @@ def Target.resolve (target : Target) (base : Option URI := none) : Except Target
           absolute := true }
       let query := reference.query.getD (if emptyPath then base.query else .empty)
       return { base with path, query, fragment := reference.fragment }
+
+/-- Resolve an HTTP request target. -/
+def Target.resolve (target : Target) (base : Option URI := none) : Except Target.Error URI :=
+  target.resolveIn Target.httpSchemes base
 
 end LeanHttp

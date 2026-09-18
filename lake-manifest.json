@@ -1,6 +1,13 @@
 {"version": "1.2.0",
  "packagesDir": ".lake/packages",
- "packages": [],
+ "packages":
+ [{"type": "path",
+   "scope": "",
+   "name": "leanws",
+   "manifestFile": "lake-manifest.json",
+   "inherited": false,
+   "dir": "../leanws",
+   "configFile": "lakefile.lean"}],
  "name": "leanhttp",
  "lakeDir": ".lake",
  "fixedToolchain": false}

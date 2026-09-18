@@ -52,7 +52,8 @@ private def bodyBytes : Body → IO (Option (Header.Value × ByteArray))
         encoded := encoded ++ [s!"{← FFI.escape name}={← FFI.escape value}"]
       pure (some (Header.Value.ofString! "application/x-www-form-urlencoded", (String.intercalate "&" encoded).toUTF8))
 
-private def configureTls (h : FFI.Handle) : Tls → IO Unit
+/-- Apply a TLS policy to a handle. Shared by requests and WebSocket connects. -/
+def Tls.configure (h : FFI.Handle) : Tls → IO Unit
   | .system => do
       Opt.sslVerifyPeer.set h true
       Opt.sslVerifyHost.set h true
@@ -87,6 +88,7 @@ def Session.request (session : Session) (request : Request) : IO (Except Error R
       let h := session.handle
       FFI.reset h
       Opt.url.set h uri
+      Opt.pathAsIs.set h true
       Opt.timeout.set h request.timeouts.total
       Opt.connectTimeout.set h request.timeouts.connect
       match request.redirects with
@@ -94,7 +96,7 @@ def Session.request (session : Session) (request : Request) : IO (Except Error R
       | .upTo n =>
           Opt.followLocation.set h true
           Opt.maxRedirs.set h n
-      configureTls h session.config.tls
+      Tls.configure h session.config.tls
       configureAuth h request.auth
       Opt.userAgent.set h session.config.userAgent
       Opt.acceptEncoding.set h session.config.encoding

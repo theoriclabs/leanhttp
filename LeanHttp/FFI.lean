@@ -29,4 +29,18 @@ instance : Repr Handle where
 @[extern "leanhttp_close"] opaque close : @&Handle → IO Unit
 @[extern "leanhttp_escape"] opaque escape : String → IO String
 
+/-- Whether the loaded libcurl exposes the WebSocket API and lists the `ws`
+    protocol. Both checks matter: `--disable-websockets` keeps the symbols. -/
+@[extern "leanhttp_ws_supported"] opaque wsSupported : IO Bool
+/-- Why WebSocket support is unavailable; empty when it is available. -/
+@[extern "leanhttp_ws_detail"] opaque wsDetail : IO String
+/-- Send one frame, waiting up to `timeoutMs` (`0` waits indefinitely) for the
+    socket whenever libcurl cannot take the whole payload at once. -/
+@[extern "leanhttp_ws_send"] opaque wsSend : @&Handle → @&ByteArray → UInt32 → Int64 → IO Unit
+/-- Receive up to `chunkSize` bytes of the current frame. The frame's flags and
+    remaining bytes are read with the two accessors below. -/
+@[extern "leanhttp_ws_recv"] opaque wsRecv : @&Handle → UInt32 → Int64 → IO ByteArray
+@[extern "leanhttp_ws_frame_flags"] opaque wsFrameFlags : @&Handle → IO UInt32
+@[extern "leanhttp_ws_frame_bytes_left"] opaque wsFrameBytesLeft : @&Handle → IO UInt64
+
 end LeanHttp.FFI

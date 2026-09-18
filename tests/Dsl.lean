@@ -1,4 +1,5 @@
 import LeanHttp
+import LeanWs
 
 open LeanHttp Std.Http
 
@@ -150,6 +151,22 @@ private def badAuthorityPath : URI := {
 #guard toString ((LeanHttp.Request.get target!"users")
   |>.segment "a/b"
   |>.param "q" "a+b").uri == "users/a%2Fb?q=a%2Bb"
+
+-- WebSocket targets resolve with the same rules under a different scheme set.
+#guard ((target!"ws://example.com/socket").resolveIn Target.webSocketSchemes).toOption.map
+  toString == some "ws://example.com/socket"
+#guard ((target!"socket").resolveIn Target.webSocketSchemes
+  (some uri!"wss://example.com/api/index")).toOption.map toString ==
+  some "wss://example.com/api/socket"
+#guard ((target!"http://example.com").resolveIn Target.webSocketSchemes).toOption.isNone
+#guard ((target!"ws://example.com").resolve).toOption.isNone
+#guard ((target!"socket").resolveIn Target.webSocketSchemes
+  (some uri!"https://example.com/api/")).toOption.isNone
+
+-- Receive limits and close codes are leanws values, not a second vocabulary.
+example : WebSocket.Options := { limits := { maxMessage := 1 <<< 16 } }
+#guard (WebSocket.Options.limits {}).maxMessage == LeanWs.Limits.maxMessage {}
+#guard LeanWs.CloseCode.messageTooBig.code == 1009
 
 #guard (Concurrency.ofNat? 0).isNone
 #guard (Concurrency.ofNat? 3).map (·.val) == some 3

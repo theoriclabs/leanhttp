@@ -18,6 +18,7 @@ private def optSslVerifyPeer : UInt32 := 64
 private def optCaInfo : UInt32 := 10065
 private def optMaxRedirs : UInt32 := 68
 private def optHttpGet : UInt32 := 80
+private def optConnectOnly : UInt32 := 141
 private def optSslVerifyHost : UInt32 := 81
 private def optHttpVersion : UInt32 := 84
 private def optSslKey : UInt32 := 10087
@@ -28,6 +29,7 @@ private def optTimeoutMs : UInt32 := 155
 private def optConnectTimeoutMs : UInt32 := 156
 private def optNoProxy : UInt32 := 10177
 private def optTcpKeepAlive : UInt32 := 213
+private def optPathAsIs : UInt32 := 234
 private def optBearer : UInt32 := 10220
 
 inductive Opt : Type → Type where
@@ -54,6 +56,13 @@ inductive Opt : Type → Type where
   | bearer : Opt String
   | tcpKeepAlive : Opt Bool
   | maxFileSize : Opt Nat
+  /-- `1` keeps the connection without a transfer; `2` performs a WebSocket
+      handshake and then leaves the connection to `curl_ws_send`/`curl_ws_recv`. -/
+  | connectOnly : Opt Nat
+  /-- Keep the path libcurl was given. `Target.resolve` already performs RFC
+      3986 dot-segment removal, and libcurl 8.10 and later would otherwise
+      decode `%2E` and navigate with it. -/
+  | pathAsIs : Opt Bool
 
 private def boolLong (b : Bool) : Int64 := if b then 1 else 0
 
@@ -92,5 +101,7 @@ def Opt.set (h : FFI.Handle) : Opt α → α → IO Unit
       FFI.setLong h optHttpAuth 64
   | .tcpKeepAlive, b => FFI.setLong h optTcpKeepAlive (boolLong b)
   | .maxFileSize, n => FFI.setLong h optMaxFileSizeLarge n.toInt64
+  | .connectOnly, mode => FFI.setLong h optConnectOnly mode.toInt64
+  | .pathAsIs, b => FFI.setLong h optPathAsIs (boolLong b)
 
 end LeanHttp

@@ -5,12 +5,17 @@
 
 #include <lean/lean.h>
 #include <curl/curl.h>
+#include <curl/websockets.h>
 #include <dlfcn.h>
+#include <errno.h>
+#include <limits.h>
+#include <poll.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "curl_options.h"
 
@@ -33,6 +38,11 @@ typedef char *(*easy_escape_fn)(CURL *, const char *, int);
 typedef void (*curl_free_fn)(void *);
 typedef struct curl_slist *(*slist_append_fn)(struct curl_slist *, const char *);
 typedef void (*slist_free_all_fn)(struct curl_slist *);
+/* WebSocket entry points, present from libcurl 7.86. Loaded separately: a
+   libcurl without them still serves every HTTP request. */
+typedef curl_version_info_data *(*version_info_fn)(CURLversion);
+typedef CURLcode (*ws_send_fn)(CURL *, const void *, size_t, size_t *, curl_off_t, unsigned int);
+typedef CURLcode (*ws_recv_fn)(CURL *, void *, size_t, size_t *, const struct curl_ws_frame **);
 
 static struct {
   global_init_fn global_init;
@@ -48,12 +58,17 @@ static struct {
   curl_free_fn free;
   slist_append_fn slist_append;
   slist_free_all_fn slist_free_all;
+  version_info_fn version_info;
+  ws_send_fn ws_send;
+  ws_recv_fn ws_recv;
 } api;
 
 static pthread_once_t load_once = PTHREAD_ONCE_INIT;
 static void *curl_lib = NULL;
 static int load_ok = 0;
+static int ws_ok = 0;
 static char load_detail[2048];
+static char ws_detail[256];
 
 static void *symbol(const char *name) {
   void *p = dlsym(curl_lib, name);
@@ -67,6 +82,36 @@ static void *symbol(const char *name) {
   *(void **)(&api.field) = symbol(name); \
   if (api.field == NULL) return; \
 } while (0)
+
+/* The WebSocket API is optional in two independent ways: the symbols are
+   missing before 7.86, and a build with --disable-websockets keeps the symbols
+   but answers CURLE_NOT_BUILT_IN. Only the protocol list settles the second. */
+static void load_websockets(void) {
+  *(void **)(&api.version_info) = dlsym(curl_lib, "curl_version_info");
+  *(void **)(&api.ws_send) = dlsym(curl_lib, "curl_ws_send");
+  *(void **)(&api.ws_recv) = dlsym(curl_lib, "curl_ws_recv");
+  if (api.ws_send == NULL || api.ws_recv == NULL) {
+    snprintf(ws_detail, sizeof(ws_detail),
+             "libcurl %s predates the WebSocket API (7.86)", api.version());
+    return;
+  }
+  if (api.version_info == NULL) {
+    snprintf(ws_detail, sizeof(ws_detail), "libcurl has no curl_version_info");
+    return;
+  }
+  /* Only age-zero fields are read, so a libcurl older than these headers is
+     still safe to inspect. */
+  curl_version_info_data *info = api.version_info(CURLVERSION_NOW);
+  if (info == NULL || info->protocols == NULL) {
+    snprintf(ws_detail, sizeof(ws_detail), "libcurl reported no protocol list");
+    return;
+  }
+  for (const char *const *p = info->protocols; *p != NULL; ++p) {
+    if (strcmp(*p, "ws") == 0) { ws_ok = 1; return; }
+  }
+  snprintf(ws_detail, sizeof(ws_detail),
+           "libcurl %s was built without WebSocket support", api.version());
+}
 
 static void load_curl(void) {
   const char *forced = getenv("LEANHTTP_LIB");
@@ -111,6 +156,8 @@ static void load_curl(void) {
     snprintf(load_detail, sizeof(load_detail), "curl_global_init failed: %s", api.easy_strerror(code));
     return;
   }
+  ws_detail[0] = '\0';
+  load_websockets();
   load_ok = 1;
 }
 
@@ -144,6 +191,11 @@ struct leanhttp_handle {
   struct buffer response_body;
   size_t max_body;
   int body_too_large;
+  /* WebSocket scratch space plus the metadata of the last received chunk. */
+  uint8_t *ws_chunk;
+  size_t ws_chunk_size;
+  uint32_t ws_flags;
+  uint64_t ws_bytes_left;
 };
 
 static void buffer_clear(struct buffer *b) { b->size = 0; }
@@ -201,6 +253,7 @@ static void handle_finalize(void *data) {
   if (h == NULL) return;
   release_request(h);
   if (h->easy != NULL && api.easy_cleanup != NULL) api.easy_cleanup(h->easy);
+  free(h->ws_chunk);
   buffer_free(&h->response_headers);
   buffer_free(&h->response_body);
   free(h);
@@ -255,6 +308,8 @@ LEANHTTP_API lean_obj_res leanhttp_easy_reset(b_lean_obj_arg object) {
   h->error[0] = '\0';
   h->max_body = SIZE_MAX;
   h->body_too_large = 0;
+  h->ws_flags = 0;
+  h->ws_bytes_left = 0;
   api.easy_reset(h->easy);
   return lean_io_result_mk_ok(lean_box(0));
 }
@@ -372,6 +427,132 @@ LEANHTTP_API lean_obj_res leanhttp_close(b_lean_obj_arg object) {
   release_request(h);
   if (h->easy != NULL) { api.easy_cleanup(h->easy); h->easy = NULL; }
   return lean_io_result_mk_ok(lean_box(0));
+}
+
+/* ---------------------------------------------------------------- WebSocket */
+
+static lean_obj_res ws_unsupported(void) {
+  return io_error((uint32_t)CURLE_NOT_BUILT_IN,
+                  ws_detail[0] != '\0' ? ws_detail : "libcurl has no WebSocket support");
+}
+
+LEANHTTP_API lean_obj_res leanhttp_ws_supported(void) {
+  if (!ensure_loaded()) return lean_io_result_mk_ok(lean_box(0));
+  return lean_io_result_mk_ok(lean_box(ws_ok ? 1 : 0));
+}
+
+LEANHTTP_API lean_obj_res leanhttp_ws_detail(void) {
+  ensure_loaded();
+  return lean_io_result_mk_ok(lean_mk_string(
+    ws_ok ? "" : (ws_detail[0] != '\0' ? ws_detail : load_detail)));
+}
+
+static int64_t monotonic_ms(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000);
+}
+
+/* curl_ws_send and curl_ws_recv never block: they answer CURLE_AGAIN and leave
+   the caller to wait on the connection's socket. `deadline` is a monotonic
+   millisecond stamp, or -1 to wait indefinitely. */
+static CURLcode ws_wait(struct leanhttp_handle *h, int for_write, int64_t deadline) {
+  curl_socket_t socket = CURL_SOCKET_BAD;
+  CURLcode code = api.easy_getinfo(h->easy, CURLINFO_ACTIVESOCKET, &socket);
+  if (code != CURLE_OK) return code;
+  if (socket == CURL_SOCKET_BAD) return for_write ? CURLE_SEND_ERROR : CURLE_RECV_ERROR;
+  struct pollfd entry;
+  entry.fd = (int)socket;
+  entry.events = for_write ? POLLOUT : POLLIN;
+  for (;;) {
+    int wait_ms = -1;
+    if (deadline >= 0) {
+      int64_t remaining = deadline - monotonic_ms();
+      if (remaining <= 0) return CURLE_OPERATION_TIMEDOUT;
+      wait_ms = remaining > INT_MAX ? INT_MAX : (int)remaining;
+    }
+    entry.revents = 0;
+    int ready = poll(&entry, 1, wait_ms);
+    if (ready > 0) return CURLE_OK;
+    if (ready == 0) return CURLE_OPERATION_TIMEDOUT;
+    if (errno == EINTR) continue;
+    return for_write ? CURLE_SEND_ERROR : CURLE_RECV_ERROR;
+  }
+}
+
+static int64_t ws_deadline(int64_t timeout_ms) {
+  return timeout_ms > 0 ? monotonic_ms() + timeout_ms : -1;
+}
+
+/* Send one complete message or control frame. The total size is announced in
+   the first call so a partially consumed payload can continue the same frame
+   with CURLWS_OFFSET, as curl_ws_send(3) requires. */
+LEANHTTP_API lean_obj_res leanhttp_ws_send(b_lean_obj_arg object, b_lean_obj_arg payload,
+                                           uint32_t flags, int64_t timeout_ms) {
+  struct leanhttp_handle *h = get_handle(object);
+  if (h->easy == NULL) return io_error(2, "LeanHttp websocket is closed");
+  if (!ws_ok) return ws_unsupported();
+  const size_t size = lean_sarray_size(payload);
+  const uint8_t *data = lean_sarray_cptr(payload);
+  const int64_t deadline = ws_deadline(timeout_ms);
+  size_t offset = 0;
+  for (;;) {
+    size_t sent = 0;
+    unsigned int call_flags = offset == 0 ? (unsigned int)flags
+                                          : (unsigned int)flags | CURLWS_OFFSET;
+    curl_off_t fragsize = offset == 0 ? (curl_off_t)size : 0;
+    CURLcode code = api.ws_send(h->easy, data + offset, size - offset, &sent,
+                                fragsize, call_flags);
+    if (code == CURLE_OK) {
+      offset += sent;
+      if (offset >= size) return lean_io_result_mk_ok(lean_box(0));
+    } else if (code != CURLE_AGAIN) {
+      return handle_error(h, code, "curl_ws_send");
+    }
+    code = ws_wait(h, 1, deadline);
+    if (code != CURLE_OK) return handle_error(h, code, "websocket send");
+  }
+}
+
+/* Receive the next chunk of the current frame, waiting for the socket while
+   libcurl has nothing buffered. The frame flags and the bytes still missing
+   from the frame are kept on the handle for the two accessors below. */
+LEANHTTP_API lean_obj_res leanhttp_ws_recv(b_lean_obj_arg object, uint32_t chunk_size,
+                                           int64_t timeout_ms) {
+  struct leanhttp_handle *h = get_handle(object);
+  if (h->easy == NULL) return io_error(2, "LeanHttp websocket is closed");
+  if (!ws_ok) return ws_unsupported();
+  size_t wanted = chunk_size == 0 ? 1 : (size_t)chunk_size;
+  if (h->ws_chunk == NULL || h->ws_chunk_size < wanted) {
+    uint8_t *next = realloc(h->ws_chunk, wanted);
+    if (next == NULL) return io_error(9001, "allocating websocket receive buffer failed");
+    h->ws_chunk = next;
+    h->ws_chunk_size = wanted;
+  }
+  const int64_t deadline = ws_deadline(timeout_ms);
+  for (;;) {
+    size_t received = 0;
+    const struct curl_ws_frame *meta = NULL;
+    CURLcode code = api.ws_recv(h->easy, h->ws_chunk, wanted, &received, &meta);
+    if (code == CURLE_OK) {
+      h->ws_flags = meta != NULL ? (uint32_t)meta->flags : 0;
+      h->ws_bytes_left = meta != NULL && meta->bytesleft > 0 ? (uint64_t)meta->bytesleft : 0;
+      lean_object *out = lean_alloc_sarray(1, received, received);
+      if (received) memcpy(lean_sarray_cptr(out), h->ws_chunk, received);
+      return lean_io_result_mk_ok(out);
+    }
+    if (code != CURLE_AGAIN) return handle_error(h, code, "curl_ws_recv");
+    code = ws_wait(h, 0, deadline);
+    if (code != CURLE_OK) return handle_error(h, code, "websocket receive");
+  }
+}
+
+LEANHTTP_API lean_obj_res leanhttp_ws_frame_flags(b_lean_obj_arg object) {
+  return lean_io_result_mk_ok(lean_box_uint32(get_handle(object)->ws_flags));
+}
+
+LEANHTTP_API lean_obj_res leanhttp_ws_frame_bytes_left(b_lean_obj_arg object) {
+  return lean_io_result_mk_ok(lean_box_uint64(get_handle(object)->ws_bytes_left));
 }
 
 LEANHTTP_API lean_obj_res leanhttp_escape(lean_obj_arg input) {
