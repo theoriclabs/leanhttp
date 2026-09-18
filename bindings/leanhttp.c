@@ -3,6 +3,12 @@
 #error "32-bit platforms are not supported by LeanHttp."
 #endif
 
+/* clock_gettime(CLOCK_MONOTONIC) and poll need POSIX.2008; Lean's headers can
+   otherwise leave the glibc feature macros too narrow for bookworm builds. */
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <lean/lean.h>
 #include <curl/curl.h>
 #include <curl/websockets.h>
