@@ -5,7 +5,7 @@ are published as `vX.Y.Z` Git tags and GitHub releases.
 
 ## [Unreleased]
 
-## [0.4.0] - 2026-09-18
+## [0.4.0] - 2026-09-21
 
 ### Added
 
@@ -34,6 +34,12 @@ are published as `vX.Y.Z` Git tags and GitHub releases.
   stays data. libcurl 8.10 and later decode it and then apply dot-segment
   removal, which turned `.segment "."` into directory navigation on the wire.
   `Target.resolve` already performs RFC 3986 dot-segment removal itself.
+
+### Documentation
+
+- The README opens with an install and quick-start path, carries a table of
+  contents, and documents every `Error.Kind` case and its `SslFailure` detail in
+  one table.
 
 ### Compatibility
 
@@ -158,7 +164,8 @@ Initial source version; no GitHub release was published for this version.
   timeouts, response limits, and dedicated request tasks.
 - In-process HTTP and library-loader failure test suites.
 
-[Unreleased]: https://github.com/theoriclabs/leanhttp/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/theoriclabs/leanhttp/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/theoriclabs/leanhttp/releases/tag/v0.4.0
 [0.3.1]: https://github.com/theoriclabs/leanhttp/releases/tag/v0.3.1
 [0.3.0]: https://github.com/theoriclabs/leanhttp/releases/tag/v0.3.0
 [0.2.0]: https://github.com/theoriclabs/leanhttp/releases/tag/v0.2.0

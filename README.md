@@ -1,9 +1,24 @@
 # LeanHttp
 
-A synchronous and asynchronous HTTP client for Lean 4 backed by libcurl through a small C FFI.
-The public API reuses `Std.Http`'s validated methods, URIs, headers, and
-statuses. HTTP error statuses are ordinary responses; transport failures have
-typed, stable categories.
+**An HTTP and WebSocket client for Lean 4, backed by libcurl through a small C FFI.**
+
+[![Release](https://img.shields.io/badge/release-v0.4.0-3178c6)](https://github.com/theoriclabs/leanhttp/releases)
+[![Lean](https://img.shields.io/badge/Lean-v4.33.0-555555)](https://lean-lang.org)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+Lean's `Std.Http` ships an HTTP/1.1 *server* along with validated request,
+response, header, status and URI types. LeanHttp supplies the other half — the
+client — in exactly those types, adding TLS, redirects, proxies, HTTP/2 and
+WebSocket through libcurl.
+
+- **Speaks `Std.Http`.** Validated methods, URIs, headers and statuses, not a parallel vocabulary.
+- **Honest failures.** HTTP error statuses are ordinary responses; transport failures are a closed set of typed categories.
+- **Sync, async and batched.** Blocking calls, `Async` actions, `Task` variants, and bounded concurrent batches.
+- **Composable requests.** Pipelines for bodies, authentication, headers, path segments and query parameters.
+- **Typed targets.** Absolute or relative, resolved against a session base with RFC 3986 semantics.
+- **WebSocket included.** `ws://` and `wss://` on the same session configuration, carrying [leanws](https://github.com/theoriclabs/leanws) message types.
+
+## Install
 
 ```toml
 [[require]]
@@ -12,8 +27,11 @@ git = "https://github.com/theoriclabs/leanhttp"
 rev = "v0.4.0"
 ```
 
-LeanHttp resolves one dependency, [leanws](https://github.com/theoriclabs/leanws),
-for the WebSocket message types described below.
+Requires Lean `v4.33.0`. LeanHttp resolves one dependency,
+[leanws](https://github.com/theoriclabs/leanws), for the WebSocket message types
+described below.
+
+## Quick start
 
 ```lean
 import LeanHttp
@@ -32,6 +50,16 @@ basic and bearer authentication, proxies, compression, binary/text/JSON/form
 bodies, typed body codecs, and one-session-per-task concurrency.
 `LeanHttp.WebSocket` reuses the same configuration for `ws://` and `wss://`
 connections.
+
+## Contents
+
+- [Composing requests](#composing-requests)
+- [Validated literals and URL components](#validated-literals-and-url-components)
+- [Absolute and relative targets](#absolute-and-relative-targets)
+- [Async requests and bounded batches](#async-requests-and-bounded-batches)
+- [WebSocket connections](#websocket-connections)
+- [Transport errors](#transport-errors)
+- [Runtime and development](#runtime-and-development)
 
 ## Composing requests
 
@@ -273,6 +301,33 @@ libcurl gained the WebSocket API in 7.86 and can still be built without it.
 fails with a typed `.websocketUnsupported` error instead of a generic transport
 failure. There is no permessage-deflate and no cancellation API here either.
 
+## Transport errors
+
+Every failure that prevents a response carries an `Error` with a stable
+`Error.Kind`, the verbatim libcurl `code`, a short `message` and a `detail`
+string. An HTTP error status is never one of these: a `503` is an ordinary
+response.
+
+| Kind | Raised when |
+| --- | --- |
+| `.libraryNotFound searched` | libcurl could not be loaded; carries the paths that were searched |
+| `.unsupportedProtocol` | the loaded libcurl does not handle the scheme |
+| `.urlMalformed` | the URL was rejected, including a relative target with no base |
+| `.couldntResolveProxy` / `.couldntResolveHost` | DNS resolution failed |
+| `.couldntConnect` | the connection was refused or the peer was unreachable |
+| `.timeout` | a configured timeout expired |
+| `.tooManyRedirects` | the redirect limit was exceeded |
+| `.ssl detail` | TLS failed; `SslFailure` distinguishes `.connectError`, `.peerCertificate`, `.caCert`, `.cipher`, `.clientCert` and `.other` |
+| `.sendRecv` | the connection broke mid-transfer |
+| `.tooLarge` | the response exceeded `Session.Config.maxBody` |
+| `.aborted` | the transfer was aborted |
+| `.websocketUnsupported` | the loaded libcurl was built without WebSocket support |
+| `.websocketProtocol` | the handshake failed or the peer violated RFC 6455 |
+| `.other` | anything else; `code` still identifies the libcurl result |
+
+Matching on `kind` keeps code stable across libcurl versions; read `code` only
+when you need the exact result. `toString` renders `[code] message: detail`.
+
 ## Runtime and development
 
 At runtime LeanHttp loads `libcurl.4.dylib` on macOS or `libcurl.so.4` on
@@ -282,8 +337,6 @@ additionally need a libcurl of 7.86 or later that lists the `ws` protocol;
 supported. Compilation also needs libcurl headers (provided by the macOS SDK;
 typically the distribution's libcurl development package on Linux). Consumer
 executables do not need a link-time `-lcurl` flag.
-
-Requires Lean `v4.33.0`.
 
 Run the in-process HTTP, WebSocket and loader-failure suites with:
 
