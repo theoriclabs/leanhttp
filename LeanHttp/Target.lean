@@ -36,7 +36,7 @@ def RelativeRef.parse? (value : String) : Option RelativeRef := do
     else
       return {
         path := uri.path
-        query := if beforeFragment.contains "?" then some uri.query else none
+        query := uri.query
         fragment := uri.fragment }
 
 /-- Parse either an absolute URI or a relative reference. HTTP(S) scheme and
@@ -73,14 +73,14 @@ def Target.path : Target → URI.Path
   | .absolute uri => uri.path
   | .relative reference => reference.path
 
-/-- Query fields, treating an omitted relative query as empty. -/
+/-- Query fields, treating an omitted query as empty. -/
 def Target.query : Target → URI.Query
-  | .absolute uri => uri.query
+  | .absolute uri => uri.query.getD .empty
   | .relative reference => reference.query.getD .empty
 
 /-- Replace the target's query with an explicitly supplied query. -/
 def Target.withQuery : Target → URI.Query → Target
-  | .absolute uri, query => .absolute { uri with query }
+  | .absolute uri, query => .absolute { uri with query := some query }
   | .relative reference, query => .relative { reference with query := some query }
 
 -- A raw value supplied by the caller is segment data, including '.' and '..'.
@@ -157,7 +157,7 @@ def Target.resolveIn (schemes : List String) (target : Target) (base : Option UR
         else normalizePath {
           segments := base.path.parent.segments ++ reference.path.segments
           absolute := true }
-      let query := reference.query.getD (if emptyPath then base.query else .empty)
+      let query := reference.query.or (if emptyPath then base.query else none)
       return { base with path, query, fragment := reference.fragment }
 
 /-- Resolve an HTTP request target. -/

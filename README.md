@@ -2,8 +2,8 @@
 
 **An HTTP and WebSocket client for Lean 4, backed by libcurl through a small C FFI.**
 
-[![Release](https://img.shields.io/badge/release-v0.4.0-3178c6)](https://github.com/theoriclabs/leanhttp/releases)
-[![Lean](https://img.shields.io/badge/Lean-v4.33.0-555555)](https://lean-lang.org)
+[![Release](https://img.shields.io/badge/release-v0.5.0-3178c6)](https://github.com/theoriclabs/leanhttp/releases)
+[![Lean](https://img.shields.io/badge/Lean-v4.34.1-555555)](https://lean-lang.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 Lean's `Std.Http` ships an HTTP/1.1 *server* along with validated request,
@@ -24,10 +24,10 @@ WebSocket through libcurl.
 [[require]]
 name = "leanhttp"
 git = "https://github.com/theoriclabs/leanhttp"
-rev = "v0.4.0"
+rev = "v0.5.0"
 ```
 
-Requires Lean `v4.33.0`. LeanHttp resolves one dependency,
+Requires Lean `v4.34.1`. LeanHttp resolves one dependency,
 [leanws](https://github.com/theoriclabs/leanws), for the WebSocket message types
 described below.
 
@@ -175,7 +175,8 @@ before sending. Missing bases return a `.urlMalformed` error.
 
 `RelativeRef.query : Option Std.Http.URI.Query` distinguishes an omitted query
 from an explicitly empty one. An empty reference inherits the base path and query;
-`target!"?"` inherits its path and clears its query. `target!"?page=2"` replaces
+`target!"?"` inherits its path and replaces the query with an explicit empty one,
+keeping the `?` delimiter. `target!"?page=2"` replaces
 the query. Relative references never replace the base's authority. Scheme-relative
 strings such as `//other.example/path` are rejected; supply an explicit absolute
 URL when changing hosts. Absolute targets must have an HTTP(S) scheme and an
