@@ -10,7 +10,7 @@ are published as `vX.Y.Z` Git tags and GitHub releases.
 ### Changed
 
 - Requires Lean `v4.34.1` (previously `v4.33.0`). The leanws dependency is
-  pinned to commit `964c5610`, the leanws 0.2.0 release on the same toolchain.
+  pinned to the `v0.2.0` release tag on the same toolchain.
 - An explicit empty query survives resolution: `?` against
   `http://a/b/c/d;p?q` now yields `http://a/b/c/d;p?`, as RFC 3986 section 5.3
   requires. Previously the delimiter was dropped.

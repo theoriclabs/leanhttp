@@ -15,7 +15,7 @@
    "rev": "964c5610f3faf68f624d8ef2049576b8f127dcc2",
    "name": "leanws",
    "manifestFile": "lake-manifest.json",
-   "inputRev": "964c5610f3faf68f624d8ef2049576b8f127dcc2",
+   "inputRev": "v0.2.0",
    "inherited": true,
    "configFile": "lakefile.lean"}],
  "name": "leanhttp_tests",
