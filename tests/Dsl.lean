@@ -105,7 +105,7 @@ private def resolved (reference : String) : Option String := do
   ("?y", "http://a/b/c/d;p?y"), ("g?y", "http://a/b/c/g?y"),
   ("#s", "http://a/b/c/d;p?q#s"), ("g#s", "http://a/b/c/g#s"),
   ("g?y#s", "http://a/b/c/g?y#s"), (";x", "http://a/b/c/;x"),
-  ("", "http://a/b/c/d;p?q"), ("?", "http://a/b/c/d;p"),
+  ("", "http://a/b/c/d;p?q"), ("?", "http://a/b/c/d;p?"),
   (".", "http://a/b/c/"), ("./", "http://a/b/c/"),
   ("..", "http://a/b/"), ("../", "http://a/b/"),
   ("../g", "http://a/b/g"), ("../..", "http://a/"),
@@ -129,8 +129,8 @@ private def resolved (reference : String) : Option String := do
 #guard ((target!"http:relative").resolve (some uri!"http://example.com")).toOption.isNone
 #guard ((target!"ftp://example.com").resolve).toOption.isNone
 #guard (Target.parse? "//other.example/path").isNone
-#guard (Target.parse? "http://").isNone
-#guard (Target.parse? "http:///path").isNone
+#guard match (target!"http://").resolve with | .error .missingAuthority => true | _ => false
+#guard match (target!"http:///path").resolve with | .error .missingAuthority => true | _ => false
 #guard (RelativeRef.parse? "g:h").isNone
 
 -- Std.URI validates components but permits this inconsistent combination when

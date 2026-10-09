@@ -47,7 +47,7 @@ def Request.header (request : Request) (name : Header.Name) (value : Header.Valu
 def Request.addHeader (request : Request) (name : Header.Name) (value : Header.Value) : Request :=
   { request with headers := request.headers.insert name value }
 
--- Lean 4.33's query encoder leaves literal '+' unchanged, while its decoder
+-- Std's query encoder leaves literal '+' unchanged, while its decoder
 -- treats '+' as space. Restrict the encoding rule, then validate the generated
 -- bytes under Std's standard query type. No user input is parsed as encoded data.
 private def encodeQueryParam (value : String) : URI.EncodedQueryParam :=

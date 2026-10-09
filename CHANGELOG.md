@@ -5,6 +5,30 @@ are published as `vX.Y.Z` Git tags and GitHub releases.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-10
+
+### Changed
+
+- Requires Lean `v4.34.1` (previously `v4.33.0`). The leanws dependency is
+  pinned to commit `964c5610`, the leanws 0.2.0 release on the same toolchain.
+- An explicit empty query survives resolution: `?` against
+  `http://a/b/c/d;p?q` now yields `http://a/b/c/d;p?`, as RFC 3986 section 5.3
+  requires. Previously the delimiter was dropped.
+- `Target.parse?` and `target!` accept `http://` and `http:///path`, which
+  `Std.Http.URI.parse?` now reads as absolute URIs without an authority.
+  `Target.resolve` rejects them with `Target.Error.missingAuthority`; previously
+  they failed to parse.
+
+### Compatibility
+
+- Consumers must build with Lean `v4.34.1`. `Std.Http`'s `URI.query` is now
+  `Option URI.Query`, so code reading the query of a `Response.effectiveUri` or
+  a `Target.resolve` result must handle the `Option`. `Target.query` still
+  returns a `URI.Query`, treating an absent query as empty, and
+  `Target.withQuery` still takes one.
+- The package version and default user agent are now `0.5.0` and
+  `leanhttp/0.5.0`.
+
 ## [0.4.0] - 2026-09-21
 
 ### Added
@@ -164,7 +188,8 @@ Initial source version; no GitHub release was published for this version.
   timeouts, response limits, and dedicated request tasks.
 - In-process HTTP and library-loader failure test suites.
 
-[Unreleased]: https://github.com/theoriclabs/leanhttp/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/theoriclabs/leanhttp/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/theoriclabs/leanhttp/releases/tag/v0.5.0
 [0.4.0]: https://github.com/theoriclabs/leanhttp/releases/tag/v0.4.0
 [0.3.1]: https://github.com/theoriclabs/leanhttp/releases/tag/v0.3.1
 [0.3.0]: https://github.com/theoriclabs/leanhttp/releases/tag/v0.3.0
