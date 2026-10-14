@@ -23,6 +23,8 @@ instance : Repr Handle where
 @[extern "leanhttp_setopt_bytes"] opaque setBytes : @&Handle → UInt32 → @&ByteArray → IO Unit
 @[extern "leanhttp_set_headers"] opaque setHeaders : @&Handle → @&Array String → IO Unit
 @[extern "leanhttp_perform"] opaque perform : @&Handle → IO UInt32
+@[extern "leanhttp_perform_stream"] opaque performStream : @&Handle → (ByteArray → IO Unit) → IO UInt32
+@[extern "leanhttp_response_code"] opaque responseCode : @&Handle → IO UInt32
 @[extern "leanhttp_response_headers"] opaque responseHeaders : @&Handle → IO ByteArray
 @[extern "leanhttp_response_body"] opaque responseBody : @&Handle → IO ByteArray
 @[extern "leanhttp_effective_url"] opaque effectiveUrl : @&Handle → IO String

@@ -2,7 +2,7 @@
 
 **An HTTP and WebSocket client for Lean 4, backed by libcurl through a small C FFI.**
 
-[![Release](https://img.shields.io/badge/release-v0.5.0-3178c6)](https://github.com/theoriclabs/leanhttp/releases)
+[![Release](https://img.shields.io/badge/release-v0.6.0-3178c6)](https://github.com/theoriclabs/leanhttp/releases)
 [![Lean](https://img.shields.io/badge/Lean-v4.34.1-555555)](https://lean-lang.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -24,7 +24,7 @@ WebSocket through libcurl.
 [[require]]
 name = "leanhttp"
 git = "https://github.com/theoriclabs/leanhttp"
-rev = "v0.5.0"
+rev = "v0.6.0"
 ```
 
 Requires Lean `v4.34.1`. LeanHttp resolves one dependency,
@@ -56,6 +56,7 @@ connections.
 - [Composing requests](#composing-requests)
 - [Validated literals and URL components](#validated-literals-and-url-components)
 - [Absolute and relative targets](#absolute-and-relative-targets)
+- [Streaming responses and Server-Sent Events](#streaming-responses-and-server-sent-events)
 - [Async requests and bounded batches](#async-requests-and-bounded-batches)
 - [WebSocket connections](#websocket-connections)
 - [Transport errors](#transport-errors)
@@ -137,8 +138,13 @@ identifiers remain data when resolved and sent. For directory navigation, use
 reference syntax such as `target!"../users"` instead of `.segment ".."`.
 
 `.header` replaces all request headers with the same name; `.addHeader` appends
-another value. Request headers override session defaults, and a nonempty `Body`
-determines the final `Content-Type`.
+another value. `.optHeader` sets a header when an `Option Header.Value` is `some`.
+For runtime strings (such as API keys or dynamic metadata), `.header?` and
+`.addHeader?` validate the string with `Header.Value.ofString?` and return
+`Option Request`. `.withTimeouts`, `.withRedirects`, and `.withAuth` update those
+request settings in pipeline form, and `Response.header?` looks up a response
+header value as a `String`. Request headers override session defaults, and a
+nonempty `Body` determines the final `Content-Type`.
 
 `Session.Config.userAgent` is also a validated `Std.Http.Header.Value`. For
 example, use `{ userAgent := headerValue!"my-client/1.0" }`. For a runtime value,
@@ -192,6 +198,34 @@ parsing it again cannot turn it into an absolute URI.
 Migration from 0.2: code that reads `Request.uri` directly now receives a
 `Target`; match its `.absolute` and `.relative` cases or call `.resolve` with a
 base. `Response.effectiveUri` still contains the final `Std.Http.URI`.
+
+## Streaming responses and Server-Sent Events
+
+`Session.requestStream` and the one-shot `LeanHttp.requestStream` invoke a
+`ByteArray → IO Unit` callback as response chunks arrive from libcurl, returning
+the final `Response` with its status, headers, and `effectiveUri` (and an empty
+buffered `body`). `Session.Config.maxBody` still limits the total streamed bytes.
+
+For `text/event-stream` endpoints, `Session.requestSse` and `LeanHttp.requestSse`
+parse the stream incrementally according to the WHATWG Server-Sent Events
+specification and return `Outcome Unit`:
+
+```lean
+import LeanHttp
+
+open LeanHttp
+
+def streamEvents (req : Request) : IO (Outcome Unit) :=
+  requestSse req {} fun event => do
+    IO.println s!"[{event.event}] {event.data}"
+```
+
+On a 2xx response, each complete `Sse.Event` (`event`, `data`, `id`, `retry`) is
+delivered to the callback as blank-line delimiters arrive; multi-byte UTF-8
+characters split across network chunks are reassembled before validation. On a
+non-2xx response, the callback is not invoked and `.status response` carries the
+buffered error body. `requestStreamTask`, `requestStreamAsync`, `requestSseTask`,
+and `requestSseAsync` run streaming transfers on dedicated worker threads.
 
 ## Async requests and bounded batches
 

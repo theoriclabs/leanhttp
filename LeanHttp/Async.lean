@@ -31,6 +31,12 @@ def requestAsync (request : Request) (config : Session.Config := {}) :
   let task ← requestTask request config
   Std.Async.Async.ofTask task
 
+/-- Await a streaming request on a dedicated worker thread. -/
+def requestStreamAsync (request : Request) (config : Session.Config := {})
+    (onChunk : ByteArray → IO Unit) : Std.Async.Async (Except Error Response) := do
+  let task ← requestStreamTask request config onChunk
+  Std.Async.Async.ofTask task
+
 /-- Await a typed fresh-session request. Dropping this action does not cancel
     an in-flight libcurl transfer; configure request timeouts accordingly. -/
 def requestAsAsync [FromBody α] (request : Request) (config : Session.Config := {}) :

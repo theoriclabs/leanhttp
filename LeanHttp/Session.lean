@@ -41,6 +41,10 @@ def Session.new (config : Session.Config := {}) : IO (Except Error Session) := d
 def Session.close (session : Session) : IO Unit :=
   try FFI.close session.handle catch _ => pure ()
 
+/-- Read the HTTP status code of the current transfer on `session`. -/
+def Session.responseCode (session : Session) : IO UInt32 :=
+  FFI.responseCode session.handle
+
 private def bodyBytes : Body → IO (Option (Header.Value × ByteArray))
   | .empty => pure none
   | .bytes contentType data => pure (some (contentType, data))
@@ -77,6 +81,55 @@ private def configureAuth (h : FFI.Handle) : Auth → IO Unit
   | .basic user password => Opt.userPwd.set h (user, password)
   | .bearer token => Opt.bearer.set h token
 
+private def prepareTransfer (session : Session) (request : Request) (uri : URI) : IO Unit := do
+  let h := session.handle
+  FFI.reset h
+  Opt.url.set h uri
+  Opt.pathAsIs.set h true
+  Opt.timeout.set h request.timeouts.total
+  Opt.connectTimeout.set h request.timeouts.connect
+  match request.redirects with
+  | .never => Opt.followLocation.set h false
+  | .upTo n =>
+      Opt.followLocation.set h true
+      Opt.maxRedirs.set h n
+  Tls.configure h session.config.tls
+  configureAuth h request.auth
+  Opt.userAgent.set h session.config.userAgent
+  Opt.acceptEncoding.set h session.config.encoding
+  Opt.httpVersion.set h session.config.httpVersion
+  Opt.tcpKeepAlive.set h session.config.tcpKeepAlive
+  if let some proxy := session.config.proxy then Opt.proxy.set h proxy
+  unless session.config.noProxy.isEmpty do Opt.noProxy.set h session.config.noProxy
+  if let some max := session.config.maxBody then Opt.maxFileSize.set h max
+  let mut headers := overlayHeaders session.config.headers request.headers
+  let encodedBody ← bodyBytes request.body
+  if let some (contentType, bytes) := encodedBody then
+    headers := (headers.erase Header.Name.contentType).insert Header.Name.contentType contentType
+    Opt.postFields.set h bytes
+  -- POSTFIELDS enables POST, so apply the requested method after the body.
+  -- HTTPGET would discard a supplied body; CUSTOMREQUEST preserves it for GET.
+  match request.method with
+  | .get =>
+      if encodedBody.isSome then Opt.customRequest.set h .get
+      else Opt.httpGet.set h ()
+  | .head => Opt.noBody.set h true
+  | method => Opt.customRequest.set h method
+  FFI.setHeaders h (headerLines headers)
+
+private def collectResponse (h : FFI.Handle) (uri : URI) (code : UInt32) (includeBody : Bool) :
+    IO Response := do
+  let rawHeaders ← FFI.responseHeaders h
+  let body ← if includeBody then FFI.responseBody h else pure ByteArray.empty
+  let effective ← FFI.effectiveUrl h
+  let some status := Status.ofCode none code.toUInt16
+    | throw <| IO.userError s!"libcurl returned invalid HTTP status {code}"
+  let parsedHeaders ← match parseHeaderBlock rawHeaders with
+    | .ok h => pure h
+    | .error e => throw <| IO.userError e
+  let effectiveUri := (URI.parse? effective).getD uri
+  return { status, headers := parsedHeaders, body, effectiveUri }
+
 def Session.request (session : Session) (request : Request) : IO (Except Error Response) := do
   match request.uri.resolve session.config.baseUri with
   | .error .unsupportedScheme => return .error {
@@ -85,51 +138,26 @@ def Session.request (session : Session) (request : Request) : IO (Except Error R
   | .error reason => return .error (Error.url (toString reason))
   | .ok uri =>
     catchCurl do
-      let h := session.handle
-      FFI.reset h
-      Opt.url.set h uri
-      Opt.pathAsIs.set h true
-      Opt.timeout.set h request.timeouts.total
-      Opt.connectTimeout.set h request.timeouts.connect
-      match request.redirects with
-      | .never => Opt.followLocation.set h false
-      | .upTo n =>
-          Opt.followLocation.set h true
-          Opt.maxRedirs.set h n
-      Tls.configure h session.config.tls
-      configureAuth h request.auth
-      Opt.userAgent.set h session.config.userAgent
-      Opt.acceptEncoding.set h session.config.encoding
-      Opt.httpVersion.set h session.config.httpVersion
-      Opt.tcpKeepAlive.set h session.config.tcpKeepAlive
-      if let some proxy := session.config.proxy then Opt.proxy.set h proxy
-      unless session.config.noProxy.isEmpty do Opt.noProxy.set h session.config.noProxy
-      if let some max := session.config.maxBody then Opt.maxFileSize.set h max
-      let mut headers := overlayHeaders session.config.headers request.headers
-      let encodedBody ← bodyBytes request.body
-      if let some (contentType, bytes) := encodedBody then
-        headers := (headers.erase Header.Name.contentType).insert Header.Name.contentType contentType
-        Opt.postFields.set h bytes
-      -- POSTFIELDS enables POST, so apply the requested method after the body.
-      -- HTTPGET would discard a supplied body; CUSTOMREQUEST preserves it for GET.
-      match request.method with
-      | .get =>
-          if encodedBody.isSome then Opt.customRequest.set h .get
-          else Opt.httpGet.set h ()
-      | .head => Opt.noBody.set h true
-      | method => Opt.customRequest.set h method
-      FFI.setHeaders h (headerLines headers)
-      let code ← FFI.perform h
-      let rawHeaders ← FFI.responseHeaders h
-      let body ← FFI.responseBody h
-      let effective ← FFI.effectiveUrl h
-      let some status := Status.ofCode none code.toUInt16
-        | throw <| IO.userError s!"libcurl returned invalid HTTP status {code}"
-      let parsedHeaders ← match parseHeaderBlock rawHeaders with
-        | .ok h => pure h
-        | .error e => throw <| IO.userError e
-      let effectiveUri := (URI.parse? effective).getD uri
-      return { status, headers := parsedHeaders, body, effectiveUri }
+      prepareTransfer session request uri
+      let code ← FFI.perform session.handle
+      collectResponse session.handle uri code true
+
+/-- Execute a request and deliver response body chunks incrementally to `onChunk`
+    as they arrive. The returned `Response` carries the final status, headers,
+    and effective URI with an empty `body`. `Session.Config.maxBody` still limits
+    the total number of streamed bytes. -/
+def Session.requestStream (session : Session) (request : Request)
+    (onChunk : ByteArray → IO Unit) : IO (Except Error Response) := do
+  match request.uri.resolve session.config.baseUri with
+  | .error .unsupportedScheme => return .error {
+      kind := .unsupportedProtocol, code := ⟨1⟩,
+      message := "unsupported protocol", detail := "HTTP targets require an http or https scheme" }
+  | .error reason => return .error (Error.url (toString reason))
+  | .ok uri =>
+    catchCurl do
+      prepareTransfer session request uri
+      let code ← FFI.performStream session.handle onChunk
+      collectResponse session.handle uri code false
 
 def Session.withSession (config : Session.Config := {}) (k : Session → IO α) :
     IO (Except Error α) := do
@@ -149,6 +177,16 @@ def request (request : Request) (config : Session.Config := {}) : IO (Except Err
   | .error e => return .error e
   | .ok session =>
       let result ← session.request request
+      session.close
+      return result
+
+/-- Execute a streaming request using a fresh session. -/
+def requestStream (request : Request) (config : Session.Config := {})
+    (onChunk : ByteArray → IO Unit) : IO (Except Error Response) := do
+  match ← Session.new config with
+  | .error e => return .error e
+  | .ok session =>
+      let result ← session.requestStream request onChunk
       session.close
       return result
 
@@ -172,6 +210,13 @@ def postUrl (url : String) (body : Body) (headers : Headers := .empty) :
 
 def requestTask (request : Request) (config : Session.Config := {}) : BaseIO (Task (Except Error Response)) := do
   let task ← IO.asTask (LeanHttp.request request config) Task.Priority.dedicated
+  return task.map fun
+    | .ok result => result
+    | .error e => .error (Error.fromIO e)
+
+def requestStreamTask (request : Request) (config : Session.Config := {})
+    (onChunk : ByteArray → IO Unit) : BaseIO (Task (Except Error Response)) := do
+  let task ← IO.asTask (LeanHttp.requestStream request config onChunk) Task.Priority.dedicated
   return task.map fun
     | .ok result => result
     | .error e => .error (Error.fromIO e)

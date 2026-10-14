@@ -72,4 +72,8 @@ def Response.isSuccess (r : Response) : Bool :=
   let n := r.statusCode
   200 ≤ n && n < 300
 
+/-- Look up the first response header with this name as a `String`. -/
+def Response.header? (r : Response) (name : Header.Name) : Option String :=
+  (r.headers.get? name).map toString
+
 end LeanHttp

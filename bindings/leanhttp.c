@@ -196,7 +196,10 @@ struct leanhttp_handle {
   struct buffer response_headers;
   struct buffer response_body;
   size_t max_body;
+  size_t streamed_body;
   int body_too_large;
+  lean_object *stream_callback;
+  lean_object *stream_error;
   /* WebSocket scratch space plus the metadata of the last received chunk. */
   uint8_t *ws_chunk;
   size_t ws_chunk_size;
@@ -230,9 +233,26 @@ static size_t write_body(char *ptr, size_t size, size_t nmemb, void *userdata) {
   struct leanhttp_handle *h = userdata;
   if (size != 0 && nmemb > SIZE_MAX / size) return 0;
   size_t count = size * nmemb;
-  if (count > h->max_body || h->response_body.size > h->max_body - count) {
+  if (count > h->max_body || h->streamed_body > h->max_body - count) {
     h->body_too_large = 1;
     return 0;
+  }
+  h->streamed_body += count;
+  if (h->stream_callback != NULL) {
+    if (count == 0) return 0;
+    lean_object *chunk = lean_alloc_sarray(1, count, count);
+    memcpy(lean_sarray_cptr(chunk), ptr, count);
+    lean_inc(h->stream_callback);
+    lean_object *res = lean_apply_2(h->stream_callback, chunk, lean_box(0));
+    if (lean_io_result_is_error(res)) {
+      if (h->stream_error != NULL) lean_dec(h->stream_error);
+      h->stream_error = lean_io_result_get_error(res);
+      lean_inc(h->stream_error);
+      lean_dec_ref(res);
+      return 0;
+    }
+    lean_dec_ref(res);
+    return count;
   }
   return buffer_append(&h->response_body, ptr, count) ? count : 0;
 }
@@ -252,6 +272,8 @@ static void release_request(struct leanhttp_handle *h) {
   free(h->post);
   h->post = NULL;
   h->post_len = 0;
+  if (h->stream_callback != NULL) { lean_dec(h->stream_callback); h->stream_callback = NULL; }
+  if (h->stream_error != NULL) { lean_dec(h->stream_error); h->stream_error = NULL; }
 }
 
 static void handle_finalize(void *data) {
@@ -313,6 +335,7 @@ LEANHTTP_API lean_obj_res leanhttp_easy_reset(b_lean_obj_arg object) {
   buffer_clear(&h->response_body);
   h->error[0] = '\0';
   h->max_body = SIZE_MAX;
+  h->streamed_body = 0;
   h->body_too_large = 0;
   h->ws_flags = 0;
   h->ws_bytes_left = 0;
@@ -383,25 +406,57 @@ LEANHTTP_API lean_obj_res leanhttp_set_headers(b_lean_obj_arg object, b_lean_obj
   return lean_io_result_mk_ok(lean_box(0));
 }
 
-LEANHTTP_API lean_obj_res leanhttp_perform(b_lean_obj_arg object) {
-  struct leanhttp_handle *h = get_handle(object);
-  if (h->easy == NULL) return io_error(2, "LeanHttp session is closed");
+static lean_obj_res perform_common(struct leanhttp_handle *h, lean_obj_arg on_chunk) {
+  if (h->easy == NULL) {
+    if (on_chunk != NULL) lean_dec(on_chunk);
+    return io_error(2, "LeanHttp session is closed");
+  }
   buffer_clear(&h->response_headers);
   buffer_clear(&h->response_body);
+  h->streamed_body = 0;
   h->body_too_large = 0;
   h->error[0] = '\0';
+  if (h->stream_callback != NULL) { lean_dec(h->stream_callback); h->stream_callback = NULL; }
+  if (h->stream_error != NULL) { lean_dec(h->stream_error); h->stream_error = NULL; }
+  h->stream_callback = on_chunk;
   CURLcode code = api.easy_setopt(h->easy, CURLOPT_ERRORBUFFER, h->error);
   if (code == CURLE_OK) code = api.easy_setopt(h->easy, CURLOPT_WRITEFUNCTION, write_body);
   if (code == CURLE_OK) code = api.easy_setopt(h->easy, CURLOPT_WRITEDATA, h);
   if (code == CURLE_OK) code = api.easy_setopt(h->easy, CURLOPT_HEADERFUNCTION, write_header);
   if (code == CURLE_OK) code = api.easy_setopt(h->easy, CURLOPT_HEADERDATA, h);
   if (code == CURLE_OK) code = api.easy_setopt(h->easy, CURLOPT_NOSIGNAL, 1L);
-  if (code != CURLE_OK) return handle_error(h, code, "configuring transfer callbacks");
+  if (code != CURLE_OK) {
+    if (h->stream_callback != NULL) { lean_dec(h->stream_callback); h->stream_callback = NULL; }
+    return handle_error(h, code, "configuring transfer callbacks");
+  }
   code = api.easy_perform(h->easy);
+  if (h->stream_callback != NULL) { lean_dec(h->stream_callback); h->stream_callback = NULL; }
+  if (h->stream_error != NULL) {
+    lean_object *err = h->stream_error;
+    h->stream_error = NULL;
+    return lean_io_result_mk_error(err);
+  }
   if (h->body_too_large) return handle_error(h, CURLE_FILESIZE_EXCEEDED, "response body limit");
   if (code != CURLE_OK) return handle_error(h, code, "curl_easy_perform");
   long status = 0;
   code = api.easy_getinfo(h->easy, CURLINFO_RESPONSE_CODE, &status);
+  if (code != CURLE_OK) return handle_error(h, code, "curl_easy_getinfo(status)");
+  return lean_io_result_mk_ok(lean_box_uint32((uint32_t)status));
+}
+
+LEANHTTP_API lean_obj_res leanhttp_perform(b_lean_obj_arg object) {
+  return perform_common(get_handle(object), NULL);
+}
+
+LEANHTTP_API lean_obj_res leanhttp_perform_stream(b_lean_obj_arg object, lean_obj_arg on_chunk) {
+  return perform_common(get_handle(object), on_chunk);
+}
+
+LEANHTTP_API lean_obj_res leanhttp_response_code(b_lean_obj_arg object) {
+  struct leanhttp_handle *h = get_handle(object);
+  if (h->easy == NULL) return io_error(2, "LeanHttp session is closed");
+  long status = 0;
+  CURLcode code = api.easy_getinfo(h->easy, CURLINFO_RESPONSE_CODE, &status);
   if (code != CURLE_OK) return handle_error(h, code, "curl_easy_getinfo(status)");
   return lean_io_result_mk_ok(lean_box_uint32((uint32_t)status));
 }

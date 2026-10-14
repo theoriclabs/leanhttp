@@ -69,6 +69,10 @@ private def handler (request : Request Body.Stream) : ContextAsync (Response Bod
   | ["duplicates"] =>
       response .ok ByteArray.empty
         (Headers.empty.insert! "Set-Cookie" "a=1" |>.insert! "Set-Cookie" "b=2")
+  | ["sse"] =>
+      let sseBody := ": comment\n\nevent: token\nid: 1\ndata: Hello\n\nevent: token\ndata:  world\ndata: !\n\n"
+      response .ok sseBody.toUTF8
+        (Headers.empty.insert! "Content-Type" "text/event-stream")
   | ["large", size] =>
       response .ok (String.ofList (List.replicate (size.toNat?.getD 0) 'x')).toUTF8
   | _ => response .notFound "not found".toUTF8
@@ -294,7 +298,43 @@ def main : IO UInt32 := do
   | .error { kind := .tooLarge, .. } => pure ()
   | .error e => throw <| IO.userError s!"FAIL: expected tooLarge, got {e}"
   | .ok _ => throw <| IO.userError "FAIL: body over maxBody was accepted"
+  match ← tiny.requestStream { uri := serverUri port "large/17" } (fun _ => pure ()) with
+  | .error { kind := .tooLarge, .. } => pure ()
+  | .error e => throw <| IO.userError s!"FAIL: expected streaming tooLarge, got {e}"
+  | .ok _ => throw <| IO.userError "FAIL: streamed body over maxBody was accepted"
   tiny.close
+
+  let streamedRef ← IO.mkRef ByteArray.empty
+  let streamResp ← expectOk (← session.requestStream
+    { method := .post, uri := serverUri port "echo", body := .text headerValue!"text/plain" "streamed-payload" }
+    (fun chunk => streamedRef.modify (· ++ chunk))) "requestStream"
+  check (streamResp.status == .ok && streamResp.body.isEmpty)
+    "requestStream returns status/headers with an empty buffered body"
+  check (streamResp.header? headerName!"x-method" == some "POST") "Response.header? reads header string"
+  check ((← streamedRef.get) == "streamed-payload".toUTF8) "requestStream delivers all body bytes to callback"
+
+  let sseEventsRef ← IO.mkRef (#[] : Array Sse.Event)
+  let sseOutcome ← session.requestSse (LeanHttp.Request.get (serverUri port "sse"))
+    (fun ev => sseEventsRef.modify (·.push ev))
+  match sseOutcome with
+  | .ok () raw =>
+      check (raw.status == .ok) "requestSse returns 200"
+      let evs ← sseEventsRef.get
+      check (evs == #[
+        { event := "token", data := "Hello", id := some "1", retry := none },
+        { event := "token", data := " world\n!", id := some "1", retry := none }
+      ]) s!"requestSse parses SSE events: {repr evs}"
+  | _ => throw <| IO.userError "FAIL: requestSse failed on valid SSE endpoint"
+
+  let sseErrEventsRef ← IO.mkRef (#[] : Array Sse.Event)
+  let sseStatusOutcome ← session.requestSse (LeanHttp.Request.get (serverUri port "status/401"))
+    (fun ev => sseErrEventsRef.modify (·.push ev))
+  match sseStatusOutcome with
+  | .status raw =>
+      check (raw.statusCode == 401 && raw.body == "status 401".toUTF8)
+        "requestSse buffers error body on non-2xx status"
+      check ((← sseErrEventsRef.get).isEmpty) "requestSse does not emit events on non-2xx status"
+  | _ => throw <| IO.userError "FAIL: requestSse did not return .status on 401"
 
   let refused := URI.parse! "http://127.0.0.1:1/"
   match ← LeanHttp.get refused with

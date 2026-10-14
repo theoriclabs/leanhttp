@@ -5,6 +5,29 @@ are published as `vX.Y.Z` Git tags and GitHub releases.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-13
+
+### Added
+
+- `Session.requestStream`, `LeanHttp.requestStream`, `requestStreamTask`, and
+  `requestStreamAsync` deliver response body chunks incrementally to a
+  `ByteArray → IO Unit` callback while enforcing `Session.Config.maxBody`.
+- `LeanHttp.Sse`: incremental WHATWG Server-Sent Events (`text/event-stream`)
+  parsing (`Sse.Event`, `Sse.Parser`) and `Session.requestSse`,
+  `LeanHttp.requestSse`, `requestSseTask`, and `requestSseAsync`. Non-2xx
+  responses return `.status response` with the buffered response body without
+  invoking the event callback.
+- `Request.header?` and `Request.addHeader?` validate runtime `String` header
+  values with `Std.Http.Header.Value.ofString?` and return `Option Request`.
+- `Request.optHeader`, `Request.withTimeouts`, `Request.withRedirects`,
+  `Request.withAuth`, and `Response.header?` for pipeline composition and
+  response header lookup.
+
+### Compatibility
+
+- Additive. The package version and default user agent are now `0.6.0` and
+  `leanhttp/0.6.0`.
+
 ## [0.5.0] - 2026-10-10
 
 ### Changed
@@ -188,7 +211,8 @@ Initial source version; no GitHub release was published for this version.
   timeouts, response limits, and dedicated request tasks.
 - In-process HTTP and library-loader failure test suites.
 
-[Unreleased]: https://github.com/theoriclabs/leanhttp/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/theoriclabs/leanhttp/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/theoriclabs/leanhttp/releases/tag/v0.6.0
 [0.5.0]: https://github.com/theoriclabs/leanhttp/releases/tag/v0.5.0
 [0.4.0]: https://github.com/theoriclabs/leanhttp/releases/tag/v0.4.0
 [0.3.1]: https://github.com/theoriclabs/leanhttp/releases/tag/v0.3.1

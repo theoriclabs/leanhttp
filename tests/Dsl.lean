@@ -61,6 +61,48 @@ private def headersRequest : LeanHttp.Request :=
 #guard (headersRequest.headers.getAll? headerName!"x-trace").map
   (fun values => values.map toString) == some #["new", "last"]
 
+-- Runtime header validation and pipeline helpers.
+#guard match (LeanHttp.Request.get uri!"https://example.com").header? headerName!"x-api-key" "secret-123" with
+  | some req => (req.headers.get? headerName!"x-api-key").map toString == some "secret-123"
+  | none => false
+
+#guard ((LeanHttp.Request.get uri!"https://example.com").header? headerName!"x-api-key" "bad\r\nheader").isNone
+#guard ((LeanHttp.Request.get uri!"https://example.com").addHeader? headerName!"x-api-key" "bad\u0000header").isNone
+
+private def pipelineHelpersReq : LeanHttp.Request :=
+  (LeanHttp.Request.post uri!"https://example.com")
+    |>.optHeader headerName!"x-present" (some headerValue!"yes")
+    |>.optHeader headerName!"x-absent" none
+    |>.withRedirects .never
+    |>.withTimeouts { connect := .ofNat 1000, total := .ofNat 5000 }
+    |>.withAuth (.bearer "tok")
+
+#guard (pipelineHelpersReq.headers.get? headerName!"x-present").map toString == some "yes"
+#guard (pipelineHelpersReq.headers.get? headerName!"x-absent").isNone
+
+-- WHATWG SSE parser: comments, multi-line data, custom events, id persistence,
+-- CRLF split across chunks, and multi-byte UTF-8 split across chunks.
+private def testSseSplit : Bool := Id.run do
+  let p0 : Sse.Parser := {}
+  let utf8Bytes := "data: 東京 😀\r\n\r\n".toUTF8
+  -- Split right in the middle of the 3-byte UTF-8 sequence for '東' (index 7)
+  -- and also test CRLF handling.
+  let chunk1 := utf8Bytes.extract 0 7
+  let chunk2 := utf8Bytes.extract 7 utf8Bytes.size
+  let .ok (p1, evs1) := p0.feed chunk1 | return false
+  if !evs1.isEmpty then return false
+  let .ok (p2, evs2) := p1.feed chunk2 | return false
+  if evs2 != #[{ event := "message", data := "東京 😀" }] then return false
+  let multi := (": keepalive\r\nevent: delta\r\nid: 42\r\nretry: 1500\r\ndata: line 1\r\ndata: line 2\r\n\r\ndata: next\n\n").toUTF8
+  let .ok (p3, evs3) := p2.feed multi | return false
+  let expected := #[
+    { event := "delta", data := "line 1\nline 2", id := some "42", retry := some 1500 : Sse.Event },
+    { event := "message", data := "next", id := some "42", retry := none : Sse.Event }
+  ]
+  return evs3 == expected && p3.finish.isOk
+
+#guard testSseSplit
+
 -- JSON encoding stays explicit for types that also have other body codecs.
 #guard match Body.ofJson "hello" with
   | .json json => json.compress == "\"hello\""

@@ -39,6 +39,18 @@ def Request.bearer (request : Request) (token : String) : Request :=
 def Request.basic (request : Request) (user password : String) : Request :=
   { request with auth := .basic user password }
 
+/-- Replace the request's authentication setting. -/
+def Request.withAuth (request : Request) (auth : Auth) : Request :=
+  { request with auth }
+
+/-- Replace the request's connection and total timeouts. -/
+def Request.withTimeouts (request : Request) (timeouts : Timeouts) : Request :=
+  { request with timeouts }
+
+/-- Replace the request's redirect policy. -/
+def Request.withRedirects (request : Request) (redirects : Redirects) : Request :=
+  { request with redirects }
+
 /-- Replace every request header with this name with one value. -/
 def Request.header (request : Request) (name : Header.Name) (value : Header.Value) : Request :=
   { request with headers := (request.headers.erase name).insert name value }
@@ -46,6 +58,24 @@ def Request.header (request : Request) (name : Header.Name) (value : Header.Valu
 /-- Append a header, preserving existing fields with the same name. -/
 def Request.addHeader (request : Request) (name : Header.Name) (value : Header.Value) : Request :=
   { request with headers := request.headers.insert name value }
+
+/-- Conditionally replace every request header with this name when `value` is `some`. -/
+def Request.optHeader (request : Request) (name : Header.Name) (value : Option Header.Value) : Request :=
+  match value with
+  | some v => request.header name v
+  | none   => request
+
+/-- Validate a runtime header value and replace every request header with this
+    name, returning `none` if the value contains CR, LF, or NUL. -/
+def Request.header? (request : Request) (name : Header.Name) (value : String) : Option Request := do
+  let validated ← Header.Value.ofString? value
+  return request.header name validated
+
+/-- Validate a runtime header value and append it, preserving existing fields
+    with the same name. Returns `none` if the value contains CR, LF, or NUL. -/
+def Request.addHeader? (request : Request) (name : Header.Name) (value : String) : Option Request := do
+  let validated ← Header.Value.ofString? value
+  return request.addHeader name validated
 
 -- Std's query encoder leaves literal '+' unchanged, while its decoder
 -- treats '+' as space. Restrict the encoding rule, then validate the generated
