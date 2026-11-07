@@ -5,6 +5,20 @@ are published as `vX.Y.Z` Git tags and GitHub releases.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-07
+
+### Changed
+
+- Requires Lean `v4.35.0` (previously `v4.34.1`). The leanws dependency is
+  pinned to the `v0.3.0` release tag on the same toolchain. No source changes
+  were needed, and the build has no warnings.
+
+### Compatibility
+
+- Consumers must build with Lean `v4.35.0`, and with leanws `v0.3.0` if they
+  require leanws directly. The package version and default user agent are now
+  `0.7.0` and `leanhttp/0.7.0`.
+
 ## [0.6.0] - 2026-10-13
 
 ### Added
@@ -211,7 +225,8 @@ Initial source version; no GitHub release was published for this version.
   timeouts, response limits, and dedicated request tasks.
 - In-process HTTP and library-loader failure test suites.
 
-[Unreleased]: https://github.com/theoriclabs/leanhttp/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/theoriclabs/leanhttp/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/theoriclabs/leanhttp/releases/tag/v0.7.0
 [0.6.0]: https://github.com/theoriclabs/leanhttp/releases/tag/v0.6.0
 [0.5.0]: https://github.com/theoriclabs/leanhttp/releases/tag/v0.5.0
 [0.4.0]: https://github.com/theoriclabs/leanhttp/releases/tag/v0.4.0
