@@ -3,7 +3,7 @@ import Lake
 open System Lake DSL
 
 package leanhttp where
-  version := v!"0.7.0"
+  version := v!"0.8.0"
   keywords := #["http", "websocket", "client", "curl", "ffi"]
   license := "MIT"
 
