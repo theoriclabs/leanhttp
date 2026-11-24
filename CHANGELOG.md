@@ -9,9 +9,9 @@ are published as `vX.Y.Z` Git tags and GitHub releases.
 
 ### Changed
 
-- Requires Lean `v4.36.0` (previously `v4.35.0`). The leanws dependency stays
-  pinned to `v0.3.0`, which builds on the new toolchain without changes. No
-  LeanHttp source changes were needed, and the build has no warnings.
+- Requires Lean `v4.36.0` (previously `v4.35.0`). The leanws dependency is
+  pinned to `v0.4.0`, which uses the same Lean toolchain. No LeanHttp source
+  changes are required.
 
 ### Compatibility
 

@@ -9,7 +9,7 @@ package leanhttp where
 
 -- WebSocket messages, close codes and fragment reassembly come from leanws, so
 -- this client and LeanWs.Client present the same types.
-require leanws from git "https://github.com/theoriclabs/leanws" @ "v0.3.0"
+require leanws from git "https://github.com/theoriclabs/leanws" @ "v0.4.0"
 
 target leanhttp.o pkg : FilePath := do
   let oFile := pkg.buildDir / "leanhttp.o"
